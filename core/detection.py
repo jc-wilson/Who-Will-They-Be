@@ -10,11 +10,15 @@ class MatchDetectionHandler:
         self.pre_game_match_id = None
         self.player_info = None
         self.player_info_pre = None
+        self.party_id = None
+        self.user_puuid = None
 
 
     def detect_match_handler(self):
         handler = LockfileHandler()
         handler.lockfile_data_function()
+
+        self.user_puuid = handler.puuid
 
         self.match_id_header = {
             "X-Riot-ClientPlatform": "ew0KCSJwbGF0Zm9ybVR5cGUiOiAiUEMiLA0KCSJwbGF0Zm9ybU9TIjogIldpbmRvd3MiLA0KCSJwbGF0Zm9ybU9TVmVyc2lvbiI6ICIxMC4wLjE5MDQyLjEuMjU2LjY0Yml0IiwNCgkicGxhdGZvcm1DaGlwc2V0IjogIlVua25vd24iDQp9",
@@ -41,6 +45,10 @@ class MatchDetectionHandler:
             self.in_match = self.pre_game_match_id["MatchID"]
         else:
             print("not in match")
+            self.party_id = requests.get(
+                f"https://glz-eu-1.eu.a.pvp.net/parties/v1/players/{handler.puuid}",
+                headers=self.match_id_header
+            )
 
 # Player info retrieval
     def player_info_retrieval(self):

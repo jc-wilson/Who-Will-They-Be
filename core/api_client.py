@@ -3,6 +3,7 @@ from core.local_api import LockfileHandler
 from core.valorant_uuid import UUIDHandler
 import requests
 import valo_api
+import sys
 import os
 import math
 import time
@@ -47,9 +48,98 @@ class ValoRank:
         self.mmr = {}
         self.match_stats = {}
         self.pip = []
-        load_dotenv()
+        self.handler = None
+
+        dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        loaded = load_dotenv(dotenv_path)
+
+        if not loaded:
+            base_path = getattr(sys, "_MEIPASS", os.path.abspath("."))
+            dotenv_path = os.path.join(base_path, "core", ".env")
+            loaded = load_dotenv(dotenv_path)
+
         VAL_API_KEY = os.getenv("VAL_API_KEY")
         valo_api.set_api_key(VAL_API_KEY)
+
+    async def lobby_load(self, on_update=None):
+        try:
+            self.handler.in_match
+        except:
+            if self.handler.party_id.status_code != 500:
+                self.handler.party_id = self.handler.party_id.json()
+                print(self.handler.party_id)
+                print(self.handler.party_id["CurrentPartyID"])
+                party_info = requests.get(
+                    f"https://glz-eu-1.eu.a.pvp.net/parties/v1/parties/{self.handler.party_id["CurrentPartyID"]}",
+                    headers=self.handler.match_id_header
+                ).json()
+                pmi = []    # Party Members Info
+                print(party_info)
+                for player in party_info["Members"]:
+                    pmi.append({
+                        "puuid": player.get("Subject"),
+                        "rank_up": player.get("CompetitiveTier"),    # Rank unpatched
+                        "level": player.get("PlayerIdentity")("AccountLevel"),
+                        "name": None,
+                        "tag": None
+                    })
+                puuids = []
+                for player in pmi:
+                    puuids.append(player.get("puuid"))
+                nt = requests.put(
+                    "https://pd.eu.a.pvp.net/name-service/v2/players",
+                    json=[puuids],
+                    headers={**self.handler.match_id_header, "Content-Type": "application/json"}
+                ).json()
+
+                for index, player in pmi:
+                    self.frontend_data[index] = {
+                        "name": f"{nt[index]['GameName']}#{nt[index]['TagLine']}",
+                        "agent": "N/A",
+                        "level": player.get("level"),
+                        "matches": "N/A",
+                        "wl": "N/A",
+                        "kd": "N/A",
+                        "hs": "N/A",
+                        "rank": player.get("rank_up"),
+                        "rr": "N/A",
+                        "peak_rank": "N/A",
+                        "peak_act": "N/A",
+                        "team": "Red"
+                    }
+
+                if on_update:
+                    on_update(self.frontend_data)
+                await asyncio.sleep(0)
+            else:
+                puuid = self.handler.user_puuid
+                nt = requests.put(
+                    "https://pd.eu.a.pvp.net/name-service/v2/players",
+                    json=[puuid],
+                    headers={**self.handler.match_id_header, "Content-Type": "application/json"}
+                ).json()
+
+                print(nt)
+
+                self.frontend_data[0] = {
+                    "name": f"{nt[0]['GameName']}#{nt[0]['TagLine']}",
+                    "agent": "N/A",
+                    "level": "N/A",
+                    "matches": "N/A",
+                    "wl": "N/A",
+                    "kd": "N/A",
+                    "hs": "N/A",
+                    "rank": "N/A",
+                    "rr": "N/A",
+                    "peak_rank": "N/A",
+                    "peak_act": "N/A",
+                    "team": "Red"
+                }
+
+                if on_update:
+                    on_update(self.frontend_data)
+                await asyncio.sleep(0)
+
 
     async def valo_stats(self, on_update=None):
         self.handler = MatchDetectionHandler()
@@ -57,8 +147,12 @@ class ValoRank:
 
         self.uuid_handler = UUIDHandler()
         self.uuid_handler.agent_uuid_function()
-
-        current_match_id = self.handler.in_match
+        print(self.handler)
+        try:
+            current_match_id = self.handler.in_match
+        except AttributeError:
+            await self.lobby_load()
+            return
 
         if self.last_match_id != current_match_id:
             self.used_puuids = []
@@ -206,6 +300,43 @@ class ValoRank:
                         f"https://pd.eu.a.pvp.net/match-history/v1/history/{puuid}?startIndex={0}&endIndex={1}",
                         headers=self.handler.match_id_header
                     ).json()
+
+                    if self.riot_name["Total"] == 0:
+                        nt = requests.put(
+                            "https://pd.eu.a.pvp.net/name-service/v2/players",
+                            json = [puuid],
+                            headers={**self.handler.match_id_header, "Content-Type": "application/json"}
+                        ).json()
+
+                        print(f"{nt[0]["GameName"]}#{nt[0]["TagLine"]} ({self.uuid_handler.agent_converter(self.ca[self.ca_count])}) has not played a game in the last 30 days")
+
+                        if self.handler.player_info:
+                            for player in self.handler.player_info["Players"]:
+                                if player["Subject"] == puuid:
+                                    bor = player["TeamID"]
+                        elif self.handler.player_info_pre:
+                            bor = self.handler.player_info_pre["AllyTeam"]["TeamID"]
+
+                        self.frontend_data[self.count] = {
+                            "name": f"{nt[0]['GameName']}#{nt[0]['TagLine']}",
+                            "agent": self.uuid_handler.agent_converter(self.ca[self.ca_count]),
+                            "level": "N/A",
+                            "matches": 0,
+                            "wl": "N/A",
+                            "kd": "N/A",
+                            "hs": "N/A",
+                            "rank": self.mmr[puuid]["current_data"]["currenttierpatched"],
+                            "rr": self.mmr[puuid]["current_data"]["ranking_in_tier"],
+                            "peak_rank": self.mmr[puuid]["highest_rank"]["patched_tier"],
+                            "peak_act": self.mmr[puuid]["highest_rank"]["season"].upper(),
+                            "team": bor
+                        }
+                        if on_update:
+                            on_update(self.frontend_data)
+                        await asyncio.sleep(0)
+                        self.used_puuids.append(puuid)
+                        continue
+
                     match_id_name = self.riot_name["History"][0]["MatchID"]
                     match_stats_name = requests.get(
                         f"https://pd.eu.a.pvp.net/match-details/v1/matches/{match_id_name}",
@@ -220,14 +351,14 @@ class ValoRank:
                                 "level": player.get("accountLevel"),
                             })
 
-                    print(f"{ntl[0]["name"]}#{ntl[0]["tag"]} ({self.uuid_handler.agent_converter(self.ca[self.ca_count])}) has not played competitive")
+                    print(f"{ntl[0]["name"]}#{ntl[0]["tag"]} ({self.uuid_handler.agent_converter(self.ca[self.ca_count])}) has not played competitive in the last 30 days/100 matches")
 
                     if self.handler.player_info:
                         for player in self.handler.player_info["Players"]:
                             if player["Subject"] == puuid:
                                 bor = player["TeamID"]
                     elif self.handler.player_info_pre:
-                        bor = self.handler.player_info_pre["Teams"][0]["TeamID"]
+                        bor = self.handler.player_info_pre["AllyTeam"]["TeamID"]
 
                     self.frontend_data[self.count] = {
                         "name": f"{ntl[0]['name']}#{ntl[0]['tag']}",
@@ -411,6 +542,10 @@ class ValoRank:
                 await gather_matches()
 
                 await self.calc_stats(index)
+
+                if on_update:
+                    on_update(self.frontend_data)
+                await asyncio.sleep(0)
 
                 self.used_puuids2.append(puuid)
 
