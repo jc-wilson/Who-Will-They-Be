@@ -19,8 +19,10 @@ class LockfileHandler:
 
     def lockfile_data_function(self):
         # Finds Lockfile
-        if os.path.exists(Path(r'C:\Users\james\AppData\Local\Riot Games\Riot Client\Config\lockfile')):
-            lockfile_path = Path(r'C:\Users\james\AppData\Local\Riot Games\Riot Client\Config\lockfile')
+        lockfile_placeholder = r"C:\Users\james\AppData\Local\Riot Games\Riot Client\Config\lockfile"
+        print(lockfile_placeholder)
+        if os.path.exists(Path(rf'{lockfile_placeholder}')):
+            lockfile_path = Path(rf'{lockfile_placeholder}')
 
             # Reads Lockfile
             lockfile_read = open(lockfile_path, "r")

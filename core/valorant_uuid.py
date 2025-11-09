@@ -26,4 +26,11 @@ class UUIDHandler:
                 result = agent["displayName"]
         return result
 
+    def agent_converter_reversed(self, agent_name):
+        result = []
+        for agent in self.agent_uuids["data"]:
+            if agent["displayName"].lower() == agent_name.lower():
+                result = agent["uuid"]
+        return result
+
 

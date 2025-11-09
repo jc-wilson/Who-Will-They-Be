@@ -1,8 +1,9 @@
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton
+    QVBoxLayout, QGridLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
+    QComboBox, QSpacerItem, QSizePolicy
 )
-from PySide6.QtCore import (Qt, QTimer, Slot, QUrl)
+from PySide6.QtCore import (Qt, QTimer, Slot, QUrl, QSize)
 from PySide6.QtGui import (QPixmap, QIcon, QColor, QBrush, QDesktopServices)
 import sys
 import os
@@ -12,7 +13,8 @@ import asyncio
 import qasync
 from core.api_client import ValoRank
 from core.dodge_button import dodge
-from core.lock_clove import LockClove
+from core.instalock_agent import instalock_agent
+from core.valorant_uuid import UUIDHandler
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller .exe"""
@@ -26,8 +28,8 @@ def resource_path(relative_path):
 
 valo_rank = ValoRank()
 dodge_game = dodge()
-il_clove = LockClove()
-
+uuid_handler = UUIDHandler()
+uuid_handler.agent_uuid_function()
 
 class ValorantStatsWindow(QMainWindow):
     def __init__(self, players=None):
@@ -35,20 +37,34 @@ class ValorantStatsWindow(QMainWindow):
 
         self.setWindowTitle("Who Will They Be")
         self.setMinimumSize(1500, 350)
-
         self.setWindowIcon(QIcon(resource_path("assets/logoone.png")))
 
+        # Instalock agent list
+        self.agent_label = QLabel("Choose your agent:")
+        self.combo = QComboBox()
+        self.combo.currentTextChanged.connect(self.on_selection_changed)
+        self.combo.addItems([
+            "Astra", "Breach", "Brimstone", "Chamber", "Clove", "Cypher",
+            "Deadlock", "Fade", "Gekko", "Harbor", "Iso", "Jett", "KAY/O",
+            "Killjoy", "Neon", "Omen", "Phoenix", "Raze", "Reyna", "Sage",
+            "Skye", "Sova", "Tejo", "Veto", "Viper", "Vyse", "Waylay", "Yoru"
+        ])
+        self.combo.setCurrentIndex(4)
+
+        # Lock Agent Button
+        self.lock_agent_button = QPushButton("Lock Agent")
+        self.lock_agent_button.clicked.connect(self.instalock_agent)
+
         # Refresh Button
-        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button = QPushButton()
+        self.refresh_button.setIcon(QIcon(resource_path("assets/refresh.png")))
+        self.refresh_button.setIconSize(QtCore.QSize(48, 48))
+        self.refresh_button.setFlat(True)
         self.refresh_button.clicked.connect(self.run_valo_stats)
 
         # Load More Matches Button (10)
         self.load_more_matches_button = QPushButton("Load More Matches (10)")
         self.load_more_matches_button.clicked.connect(self.run_load_more_matches_button)
-
-        # Lock Clove Button
-        self.lock_clove = QPushButton("Lock Clove")
-        self.lock_clove.clicked.connect(self.run_lock_clove)
 
         # Dodge Button
         self.dodge_button = QPushButton("Dodge Game")
@@ -71,20 +87,50 @@ class ValorantStatsWindow(QMainWindow):
         self.agent_icons = download_and_cache_agent_icons()
 
         # Split players by team
-
         # Populate tables if data provided
         if players:
             self.load_players(players)
 
-        # Layout
-        layout = QVBoxLayout()
+        # ─────────────── Layout ───────────────
+
+        # Grid layout for the center section (2 lines)
+        center_grid = QGridLayout()
+        center_grid.setHorizontalSpacing(8)
+        center_grid.setVerticalSpacing(6)
+
+        # Line 1 → "Choose your agent" + dropdown (centered)
+        agent_row = QHBoxLayout()
+        agent_row.setSpacing(8)
+        agent_row.setAlignment(Qt.AlignCenter)
+        agent_row.addWidget(self.agent_label)
+        agent_row.addWidget(self.combo)
+        center_grid.addLayout(agent_row, 0, 0, 1, 1)
+
+        # Line 2 → 3 buttons centered
+        button_row = QHBoxLayout()
+        button_row.setSpacing(10)
+        button_row.setAlignment(Qt.AlignCenter)
+        button_row.addWidget(self.dodge_button)
+        button_row.addWidget(self.load_more_matches_button)
+        button_row.addWidget(self.lock_agent_button)
+        center_grid.addLayout(button_row, 1, 0, 1, 1)
+
+        # Parent horizontal layout to center everything and keep refresh button aligned right
+        top_section = QHBoxLayout()
+        top_section.setContentsMargins(10, 10, 10, 0)
+        top_section.addStretch(1)
+        top_section.addLayout(center_grid)
+        top_section.addStretch(1)
+        top_section.addWidget(self.refresh_button, alignment=Qt.AlignRight | Qt.AlignVCenter)
+
+        # Tables layout
         tables_layout = QHBoxLayout()
         tables_layout.addWidget(self.table_left)
         tables_layout.addWidget(self.table_right)
-        layout.addWidget(self.lock_clove)
-        layout.addWidget(self.dodge_button)
-        layout.addWidget(self.refresh_button)
-        layout.addWidget(self.load_more_matches_button)
+
+        # Combine everything
+        layout = QVBoxLayout()
+        layout.addLayout(top_section)
         layout.addLayout(tables_layout)
 
         container = QWidget()
@@ -117,32 +163,45 @@ class ValorantStatsWindow(QMainWindow):
                     f"https://tracker.gg/valorant/profile/riot/{safe_text}/overview?platform=pc&playlist=competitive&season=4c4b8cff-43eb-13d3-8f14-96b783c90cd2"
                 ))
 
+    def on_selection_changed(self, text):
+        self.agent = uuid_handler.agent_converter_reversed(text)
+
+    def instalock_agent(self):
+        self.lock_agent_button.setEnabled(False)
+        instalock_agent(self.agent)
+        self.lock_agent_button.setEnabled(True)
+
     def safe_load_players(self, data):
         QTimer.singleShot(0, lambda: self.load_players(data))
 
-    def run_lock_clove(self):
-        asyncio.create_task(il_clove.lock_clove_func())
-
     def run_dodge_button(self):
+        self.dodge_button.setEnabled(False)
         asyncio.create_task(dodge_game.dodge_func())
+        self.dodge_button.setEnabled(True)
 
     def run_valo_stats(self):
         """Run the async refresh task without blocking UI"""
         asyncio.create_task(self.refresh_data())
 
     def run_load_more_matches_button(self):
+        self.load_more_matches_button.setEnabled(False)
         asyncio.create_task(self.run_load_more_matches())
+        self.load_more_matches_button.setEnabled(True)
 
     async def run_load_more_matches(self):
+        self.refresh_button.setEnabled(False)
         await valo_rank.load_more_matches(on_update=self.safe_load_players)
+        self.refresh_button.setEnabled(True)
 
 
     async def refresh_data(self):
+        self.refresh_button.setEnabled(False)  # disable the button
         """Actually run valo_stats() and update the table"""
         print("Fetching latest Valorant stats...")
         await valo_rank.valo_stats(on_update=self.safe_load_players)  # await your async API call
         print("✅ Data fetched. Refreshing table...")
-        self.load_players(valo_rank.frontend_data)
+        self.safe_load_players(valo_rank.frontend_data)
+        self.refresh_button.setEnabled(True)
 
     def fetch_agent_icons(self):
         """Fetch agent display icons and return a dict: {'Jett': QPixmap(...), ...}"""
@@ -308,6 +367,7 @@ async def main():
 
 
 if __name__ == "__main__":
+    from PySide6 import QtCore
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(resource_path("assets/logoone.png")))
     loop = qasync.QEventLoop(app)

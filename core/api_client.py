@@ -61,10 +61,32 @@ class ValoRank:
         VAL_API_KEY = os.getenv("VAL_API_KEY")
         valo_api.set_api_key(VAL_API_KEY)
 
+    async def updater_func(self, on_update):
+        if on_update:
+            on_update(self.frontend_data)
+        await asyncio.sleep(0.05)
+
     async def lobby_load(self, on_update=None):
         try:
             self.handler.in_match
         except:
+            print(self.frontend_data)
+            for x, y in enumerate(self.frontend_data):
+                self.frontend_data[x] = {
+                    "name": None,
+                    "agent": None,
+                    "level": None,
+                    "matches": None,
+                    "wl": None,
+                    "kd": None,
+                    "hs": None,
+                    "rank": None,
+                    "rr": None,
+                    "peak_rank": None,
+                    "peak_act": None,
+                    "team": None
+                }
+                await self.updater_func(on_update)
             if self.handler.party_id.status_code != 500:
                 self.handler.party_id = self.handler.party_id.json()
                 print(self.handler.party_id)
@@ -107,10 +129,7 @@ class ValoRank:
                         "peak_act": "N/A",
                         "team": "Red"
                     }
-
-                if on_update:
-                    on_update(self.frontend_data)
-                await asyncio.sleep(0)
+                    await self.updater_func(on_update)
             else:
                 puuid = self.handler.user_puuid
                 nt = requests.put(
@@ -135,11 +154,7 @@ class ValoRank:
                     "peak_act": "N/A",
                     "team": "Red"
                 }
-
-                if on_update:
-                    on_update(self.frontend_data)
-                await asyncio.sleep(0)
-
+                await self.updater_func(on_update)
 
     async def valo_stats(self, on_update=None):
         self.handler = MatchDetectionHandler()
@@ -331,9 +346,7 @@ class ValoRank:
                             "peak_act": self.mmr[puuid]["highest_rank"]["season"].upper(),
                             "team": bor
                         }
-                        if on_update:
-                            on_update(self.frontend_data)
-                        await asyncio.sleep(0)
+                        await self.updater_func(on_update)
                         self.used_puuids.append(puuid)
                         continue
 
@@ -374,9 +387,7 @@ class ValoRank:
                         "peak_act": self.mmr[puuid]["highest_rank"]["season"].upper(),
                         "team": bor
                     }
-                    if on_update:
-                        on_update(self.frontend_data)
-                    await asyncio.sleep(0)
+                    await self.updater_func(on_update)
                     self.used_puuids.append(puuid)
                     continue
 
@@ -406,12 +417,12 @@ class ValoRank:
 
                 await self.calc_stats(self.ca_count)
 
+                await self.updater_func(on_update)
+
         for index, puuid in enumerate(self.cmp):
             if self.ca[index] != '':
                 self.frontend_data[index]["agent"] = self.uuid_handler.agent_converter(self.ca[index])
-                if on_update:
-                    on_update(self.frontend_data)
-                await asyncio.sleep(0)
+                await self.updater_func(on_update)
             else:
                 pass
 
@@ -501,10 +512,7 @@ class ValoRank:
             "peak_act": self.mmr[self.puuid[i]]["highest_rank"]["season"].upper(),
             "team": bor
         }
-
-        if on_update:
-            on_update(self.frontend_data)
-        await asyncio.sleep(0)
+        await self.updater_func(on_update)
 
         print(
             f"{stats_list[0]['name']}#{stats_list[0]['tag']}'s ({self.uuid_handler.agent_converter(self.ca[i])}) level is {stats_list[0]['level']} | W/L % in last {match_count_kd} matches: {wl} | KD in last {match_count_kd} matches: {str(kd)[0:4]} | HS in last {match_count_kd} matches: hs is: {str(hs)[:4]}% | current rank is: {self.mmr[self.puuid[i]]['current_data']['currenttierpatched']} | current rr is: {self.mmr[self.puuid[i]]['current_data']['ranking_in_tier']} | highest rank was: {self.mmr[self.puuid[i]]['highest_rank']['patched_tier']} | peak act was: {self.mmr[self.puuid[i]]['highest_rank']['season']}")
@@ -543,9 +551,7 @@ class ValoRank:
 
                 await self.calc_stats(index)
 
-                if on_update:
-                    on_update(self.frontend_data)
-                await asyncio.sleep(0)
+                await self.updater_func(on_update)
 
                 self.used_puuids2.append(puuid)
 
