@@ -55,6 +55,28 @@ class ValorantStatsWindow(QMainWindow):
         self.lock_agent_button = QPushButton("Lock Agent")
         self.lock_agent_button.clicked.connect(self.instalock_agent)
 
+        # Current Gamemode
+        self.gamemode_label = QLabel("Gamemode:")
+        self.gamemode_label.setStyleSheet("color: #aaa;")
+        self.gamemode_value = QLabel("Unknown")  # dynamic value
+        self.gamemode_value.setStyleSheet("font-weight: 600; color: white;")
+
+        gamemode_row = QHBoxLayout()
+        gamemode_row.addWidget(self.gamemode_label)
+        gamemode_row.addWidget(self.gamemode_value)
+        gamemode_row.addStretch(1)  # optional, pushes text left
+
+        # Current Server
+        self.server_label = QLabel("Server:")
+        self.server_label.setStyleSheet("color: #aaa;")
+        self.server_value = QLabel("Unknown")  # dynamic value
+        self.server_value.setStyleSheet("font-weight: 600; color: white;")
+
+        server_row = QHBoxLayout()
+        server_row.addWidget(self.server_label)
+        server_row.addWidget(self.server_value)
+        server_row.addStretch(1)
+
         # Refresh Button
         self.refresh_button = QPushButton()
         self.refresh_button.setIcon(QIcon(resource_path("assets/refresh.png")))
@@ -115,12 +137,26 @@ class ValorantStatsWindow(QMainWindow):
         button_row.addWidget(self.lock_agent_button)
         center_grid.addLayout(button_row, 1, 0, 1, 1)
 
+        # 🆕 Top-left vertical layout for the labels
+        left_labels = QVBoxLayout()
+        left_labels.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        left_labels.setSpacing(2)
+        left_labels.addLayout(gamemode_row)
+        left_labels.addLayout(server_row)
+
         # Parent horizontal layout to center everything and keep refresh button aligned right
         top_section = QHBoxLayout()
         top_section.setContentsMargins(10, 10, 10, 0)
+
+        # 🆕 Add the stacked labels on the left
+        top_section.addLayout(left_labels)
+
+        # Center section
         top_section.addStretch(1)
         top_section.addLayout(center_grid)
         top_section.addStretch(1)
+
+        # Refresh button on the right
         top_section.addWidget(self.refresh_button, alignment=Qt.AlignRight | Qt.AlignVCenter)
 
         # Tables layout
@@ -142,8 +178,8 @@ class ValorantStatsWindow(QMainWindow):
     # ---------------------------------------------------------
     def create_table(self):
         table = QTableWidget()
-        table.setColumnCount(11)
-        table.setHorizontalHeaderLabels(["Name", "Agent", "Level", "Matches", "W/L", "KD", "HS", "Rank", "RR", "Peak Rank", "Peak Act"])
+        table.setColumnCount(12)
+        table.setHorizontalHeaderLabels(["Name", "Agent", "Level", "Matches", "W/L", "ACS", "KD", "HS", "Rank", "RR", "Peak Rank", "Peak Act"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -201,6 +237,11 @@ class ValorantStatsWindow(QMainWindow):
         await valo_rank.valo_stats(on_update=self.safe_load_players)  # await your async API call
         print("✅ Data fetched. Refreshing table...")
         self.safe_load_players(valo_rank.frontend_data)
+        try:
+            self.gamemode_value.setText(valo_rank.gs[0])
+            self.server_value.setText(valo_rank.gs[1])
+        except IndexError:
+            pass
         self.refresh_button.setEnabled(True)
 
     def fetch_agent_icons(self):
@@ -234,11 +275,12 @@ class ValorantStatsWindow(QMainWindow):
 
         self.left_players = []
         self.right_players = []
+        print(players)
         for x in players:
-            if x.get("team") == "Red":
-                self.left_players.append(x)
-            elif x.get("team") == "Blue":
-                self.right_players.append(x)
+            if players[x].get("team") == "Red":
+                self.left_players.append(players[x])
+            elif players[x].get("team") == "Blue":
+                self.right_players.append(players[x])
 
         self.fill_table(self.table_left, self.left_players)
         self.fill_table(self.table_right, self.right_players)
@@ -248,16 +290,16 @@ class ValorantStatsWindow(QMainWindow):
         table.setRowCount(len(players))
 
         RANK_COLOURS = {
-            "Unranked": "#9e9e9e",
-            "Iron": "#8d8d8d",
-            "Bronze": "#cd7f32",
-            "Silver": "#c0c0c0",
-            "Gold": "#ffcc33",
-            "Platinum": "#00bfff",
-            "Diamond": "#b366ff",
-            "Ascendant": "#4cff8f",
-            "Immortal": "#fa2a55",
-            "Radiant": "#ffff66",
+            "Unranked": "#6e7176",
+            "Iron": "#4d4945",
+            "Bronze": "#876a44",
+            "Silver": "#b8b0a8",
+            "Gold": "#dcb029",
+            "Platinum": "#316f7b",
+            "Diamond": "#8c3d84",
+            "Ascendant": "#218c5a",
+            "Immortal": "#ec3963",
+            "Radiant": "#ffffb1",
         }
 
         for row, player in enumerate(players):
@@ -266,6 +308,8 @@ class ValorantStatsWindow(QMainWindow):
             matches = QTableWidgetItem(str(player.get("matches", 0)))
             wl_value = player.get("wl", "N/A")
             wl = QTableWidgetItem(str(wl_value))
+            acs_value = player.get("acs", "N/A")
+            acs = QTableWidgetItem(str(acs_value))
             kd_value = player.get("kd", "N/A")
             kd = QTableWidgetItem(str(kd_value))
             hs_value = player.get("hs", "N/A")
@@ -296,12 +340,28 @@ class ValorantStatsWindow(QMainWindow):
             # --- WL color coding ---
             try:
                 wl_float = float(wl_value[:-1])
-                if wl_float < 45:
+                if wl_float < 47:
                     wl.setForeground(QBrush(QColor("red")))
-                elif wl_float < 55:
+                elif wl_float < 53:
                     wl.setForeground(QBrush(QColor("gold")))
-                else:
+                elif wl_float < 60:
                     wl.setForeground(QBrush(QColor("limegreen")))
+                else:
+                    wl.setForeground(QBrush(QColor("cyan")))
+            except ValueError:
+                pass  # e.g. "N/A"
+
+            # --- ACS color coding ---
+            try:
+                acs_float = float(acs_value)
+                if acs_float < 200:
+                    acs.setForeground(QBrush(QColor("red")))
+                elif acs_float < 225:
+                    acs.setForeground(QBrush(QColor("gold")))
+                elif acs_float < 250:
+                    acs.setForeground(QBrush(QColor("limegreen")))
+                else:
+                    acs.setForeground(QBrush(QColor("cyan")))
             except ValueError:
                 pass  # e.g. "N/A"
 
@@ -310,10 +370,12 @@ class ValorantStatsWindow(QMainWindow):
                 kd_float = float(kd_value)
                 if kd_float < 0.9:
                     kd.setForeground(QBrush(QColor("red")))
-                elif kd_float < 1.2:
+                elif kd_float < 1.1:
                     kd.setForeground(QBrush(QColor("gold")))
-                else:
+                elif kd_float < 1.25:
                     kd.setForeground(QBrush(QColor("limegreen")))
+                else:
+                    kd.setForeground(QBrush(QColor("cyan")))
             except ValueError:
                 pass  # e.g. "N/A"
 
@@ -324,8 +386,10 @@ class ValorantStatsWindow(QMainWindow):
                     hs.setForeground(QBrush(QColor("red")))
                 elif hs_float < 30:
                     hs.setForeground(QBrush(QColor("gold")))
-                else:
+                elif hs_float < 40:
                     hs.setForeground(QBrush(QColor("limegreen")))
+                else:
+                    hs.setForeground(QBrush(QColor("cyan")))
             except ValueError:
                 pass # e.g. "N/A"
 
@@ -342,7 +406,7 @@ class ValorantStatsWindow(QMainWindow):
                     peak.setForeground(QBrush(QColor(color)))
                     break
 
-            for col, item in enumerate([name, None, level, matches, wl, kd, hs, rank, rr, peak, peak_act]):
+            for col, item in enumerate([name, None, level, matches, wl, acs, kd, hs, rank, rr, peak, peak_act]):
                 if item:
                     item.setTextAlignment(Qt.AlignCenter)
                     table.setItem(row, col, item)

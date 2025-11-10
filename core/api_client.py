@@ -20,35 +20,25 @@ from valo_api.exceptions.valo_api_exception import ValoAPIException
 class ValoRank:
     def __init__(self):
         self.used_puuids = []
-        self.used_puuids2 = []
         self.last_match_id = None
-        self.frontend_data = [
-            {
-                "name": None,
-                "agent": None,
-                "level": None,
-                "matches": None,
-                "wl": None,
-                "kd": None,
-                "hs": None,
-                "rank": None,
-                "rr": None,
-                "peak_rank": None,
-                "peak_act": None,
-                "team": None
-            }
-            for _ in range(12)
-        ]
+        self.frontend_data = {}     # Dictionary of stats for each player
         self.cmp = []   #Current Match PUUIDs
-        self.ca = []  # Current Agent
-        self.ca_count = -1
-        self.count = -1
-        self.zero_check = []
-        self.puuid = []
+        self.ca = {}  # Current Agent
+        self.zero_check = {}    # Total amount of competitive matches a player has that can be loaded
         self.mmr = {}
         self.match_stats = {}
-        self.pip = []
+        self.pip = []   # Duplicate of player_info_pre so that it doesn't get lost when you load into a match
         self.handler = None
+        self.start = 10
+        self.end = 20
+        self.gs = []    # Gamemode and Server
+        self.gamemode_list = {
+            "Swiftplay": "Swiftplay",
+            "Deathmatch": "Deathmatch",
+            "HURM": "Team Deathmatch",
+            "Quickbomb": "Spike Rush",
+            "Bomb": "Competitive",
+        }
 
         dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
         loaded = load_dotenv(dotenv_path)
@@ -61,6 +51,7 @@ class ValoRank:
         VAL_API_KEY = os.getenv("VAL_API_KEY")
         valo_api.set_api_key(VAL_API_KEY)
 
+    # Refreshes frontend
     async def updater_func(self, on_update):
         if on_update:
             on_update(self.frontend_data)
@@ -70,26 +61,10 @@ class ValoRank:
         try:
             self.handler.in_match
         except:
-            print(self.frontend_data)
-            for x, y in enumerate(self.frontend_data):
-                self.frontend_data[x] = {
-                    "name": None,
-                    "agent": None,
-                    "level": None,
-                    "matches": None,
-                    "wl": None,
-                    "kd": None,
-                    "hs": None,
-                    "rank": None,
-                    "rr": None,
-                    "peak_rank": None,
-                    "peak_act": None,
-                    "team": None
-                }
-                await self.updater_func(on_update)
+            self.frontend_data = {}
+            await self.updater_func(on_update)
             if self.handler.party_id.status_code != 500:
                 self.handler.party_id = self.handler.party_id.json()
-                print(self.handler.party_id)
                 print(self.handler.party_id["CurrentPartyID"])
                 party_info = requests.get(
                     f"https://glz-eu-1.eu.a.pvp.net/parties/v1/parties/{self.handler.party_id["CurrentPartyID"]}",
@@ -115,12 +90,13 @@ class ValoRank:
                 ).json()
 
                 for index, player in pmi:
-                    self.frontend_data[index] = {
+                    self.frontend_data[pmi[index]["puuid"]] = {
                         "name": f"{nt[index]['GameName']}#{nt[index]['TagLine']}",
                         "agent": "N/A",
                         "level": player.get("level"),
                         "matches": "N/A",
                         "wl": "N/A",
+                        "acs": "N/A",
                         "kd": "N/A",
                         "hs": "N/A",
                         "rank": player.get("rank_up"),
@@ -138,14 +114,13 @@ class ValoRank:
                     headers={**self.handler.match_id_header, "Content-Type": "application/json"}
                 ).json()
 
-                print(nt)
-
-                self.frontend_data[0] = {
+                self.frontend_data[puuid] = {
                     "name": f"{nt[0]['GameName']}#{nt[0]['TagLine']}",
                     "agent": "N/A",
                     "level": "N/A",
                     "matches": "N/A",
                     "wl": "N/A",
+                    "acs": "N/A",
                     "kd": "N/A",
                     "hs": "N/A",
                     "rank": "N/A",
@@ -156,13 +131,37 @@ class ValoRank:
                 }
                 await self.updater_func(on_update)
 
+    # Gamemode and server detection function
+    def gs_func(self):
+        self.gs = []
+        if self.handler.player_info_pre:
+            self.gs.append(self.handler.player_info_pre["Mode"])
+            self.gs.append(self.handler.player_info_pre["GamePodID"])
+        elif self.handler.player_info:
+            self.gs.append(self.handler.player_info["ModeID"])
+            self.gs.append(self.handler.player_info["GamePodID"])
+
+        if self.gs:
+            try:
+                word = [word in self.gs[0] for word in self.gamemode_list]
+                for i, x in enumerate(word):
+                    if x == True:
+                        pos = i
+                for i, x in enumerate(self.gamemode_list):
+                    if i == pos:
+                        self.gs[0] = self.gamemode_list[x]
+            except:
+                self.gs[0] = "Unknown"
+
+            self.gs[1] = self.gs[1][29:-2].capitalize()
+
+
     async def valo_stats(self, on_update=None):
         self.handler = MatchDetectionHandler()
         await asyncio.to_thread(self.handler.player_info_retrieval)
 
         self.uuid_handler = UUIDHandler()
         self.uuid_handler.agent_uuid_function()
-        print(self.handler)
         try:
             current_match_id = self.handler.in_match
         except AttributeError:
@@ -171,34 +170,18 @@ class ValoRank:
 
         if self.last_match_id != current_match_id:
             self.used_puuids = []
-            self.used_puuids2 = []
             self.last_match_id = current_match_id
-            self.frontend_data = [
-                {
-                    "name": None,
-                    "agent": None,
-                    "level": None,
-                    "matches": None,
-                    "wl": None,
-                    "kd": None,
-                    "hs": None,
-                    "rank": None,
-                    "rr": None,
-                    "peak_rank": None,
-                    "peak_act": None,
-                    "team": None
-                }
-                for _ in range(12)
-            ]
+            self.frontend_data = {}
             self.cmp = []
-            self.ca = []
-            self.ca_count = -1
-            self.count = -1
-            self.zero_check = []
-            self.puuid = []
+            self.ca = {}
+            self.zero_check = {}
             self.mmr = {}
             self.match_stats = {}
             self.pip = []
+            self.start = 10
+            self.end = 20
+            self.gs = []
+            self.gs_func()
 
         if self.handler.player_info_pre:
             self.pip = self.handler.player_info_pre
@@ -225,21 +208,21 @@ class ValoRank:
 
         if self.cmp:
             if not self.pip and len(self.ca) != 10:
-                self.ca = []
-                for player in self.handler.player_info["Players"]:
-                    self.ca.append(player.get("CharacterID"))
+                self.ca = {}
+                for i, player in enumerate(self.handler.player_info["Players"]):
+                    self.ca[self.cmp[i]] = player.get("CharacterID")
             elif self.pip and not self.handler.player_info:
-                self.ca = []
-                for player in self.pip["AllyTeam"]["Players"]:
-                    self.ca.append(player.get("CharacterID"))
+                self.ca = {}
+                for i, player in enumerate(self.pip["AllyTeam"]["Players"]):
+                    self.ca[self.cmp[i]] = player.get("CharacterID")
             elif self.pip and self.handler.player_info and len(self.ca) == 5:
-                self.ca = []
-                for player in self.handler.player_info["Players"]:
+                self.ca = {}
+                for i, player in enumerate(self.handler.player_info["Players"]):
                     if player["TeamID"] == self.pip["AllyTeam"]["TeamID"]:
-                        self.ca.append(player.get("CharacterID"))
-                for player in self.handler.player_info["Players"]:
+                        self.ca[self.cmp[i]] = player.get("CharacterID")
+                for i, player in enumerate(self.handler.player_info["Players"]):
                     if player["TeamID"] != self.pip["AllyTeam"]["TeamID"]:
-                        self.ca.append(player.get("CharacterID"))
+                        self.ca[self.cmp[i]] = player.get("CharacterID")
 
         def to_dict(obj):
             if isinstance(obj, list):
@@ -265,10 +248,6 @@ class ValoRank:
             if puuid in self.used_puuids:
                 continue
             else:
-                self.puuid.append(puuid)
-                self.ca_count += 1
-                self.count += 1
-
                 self.valorant_mmr = None
                 try:
                     self.valorant_mmr = get_mmr_details_by_puuid_v2(region="eu", puuid=f"{puuid}")
@@ -308,7 +287,7 @@ class ValoRank:
                     headers=self.handler.match_id_header
                 ).json()
 
-                self.zero_check.append(self.riot_matches["Total"])
+                self.zero_check[puuid] = (self.riot_matches["Total"])
 
                 if self.riot_matches["Total"] == 0:
                     self.riot_name = requests.get(
@@ -323,7 +302,7 @@ class ValoRank:
                             headers={**self.handler.match_id_header, "Content-Type": "application/json"}
                         ).json()
 
-                        print(f"{nt[0]["GameName"]}#{nt[0]["TagLine"]} ({self.uuid_handler.agent_converter(self.ca[self.ca_count])}) has not played a game in the last 30 days")
+                        print(f"{nt[0]["GameName"]}#{nt[0]["TagLine"]} ({self.uuid_handler.agent_converter(self.ca[puuid])}) has not played a game in the last 30 days")
 
                         if self.handler.player_info:
                             for player in self.handler.player_info["Players"]:
@@ -332,12 +311,13 @@ class ValoRank:
                         elif self.handler.player_info_pre:
                             bor = self.handler.player_info_pre["AllyTeam"]["TeamID"]
 
-                        self.frontend_data[self.count] = {
+                        self.frontend_data[puuid] = {
                             "name": f"{nt[0]['GameName']}#{nt[0]['TagLine']}",
-                            "agent": self.uuid_handler.agent_converter(self.ca[self.ca_count]),
+                            "agent": self.uuid_handler.agent_converter(self.ca[puuid]),
                             "level": "N/A",
                             "matches": 0,
                             "wl": "N/A",
+                            "acs": "N/A",
                             "kd": "N/A",
                             "hs": "N/A",
                             "rank": self.mmr[puuid]["current_data"]["currenttierpatched"],
@@ -364,7 +344,7 @@ class ValoRank:
                                 "level": player.get("accountLevel"),
                             })
 
-                    print(f"{ntl[0]["name"]}#{ntl[0]["tag"]} ({self.uuid_handler.agent_converter(self.ca[self.ca_count])}) has not played competitive in the last 30 days/100 matches")
+                    print(f"{ntl[0]["name"]}#{ntl[0]["tag"]} ({self.uuid_handler.agent_converter(self.ca[puuid])}) has not played competitive in the last 30 days/100 matches")
 
                     if self.handler.player_info:
                         for player in self.handler.player_info["Players"]:
@@ -373,12 +353,13 @@ class ValoRank:
                     elif self.handler.player_info_pre:
                         bor = self.handler.player_info_pre["AllyTeam"]["TeamID"]
 
-                    self.frontend_data[self.count] = {
+                    self.frontend_data[puuid] = {
                         "name": f"{ntl[0]['name']}#{ntl[0]['tag']}",
-                        "agent": self.uuid_handler.agent_converter(self.ca[self.ca_count]),
+                        "agent": self.uuid_handler.agent_converter(self.ca[puuid]),
                         "level": ntl[0]["level"],
                         "matches": 0,
                         "wl": "N/A",
+                        "acs": "N/A",
                         "kd": "N/A",
                         "hs": "N/A",
                         "rank": self.mmr[puuid]["current_data"]["currenttierpatched"],
@@ -415,24 +396,24 @@ class ValoRank:
 
                 await gather_matches()
 
-                await self.calc_stats(self.ca_count)
+                await self.calc_stats(puuid)
 
                 await self.updater_func(on_update)
+
+                self.used_puuids.append(puuid)
 
         for index, puuid in enumerate(self.cmp):
-            if self.ca[index] != '':
-                self.frontend_data[index]["agent"] = self.uuid_handler.agent_converter(self.ca[index])
-                await self.updater_func(on_update)
-            else:
-                pass
+            self.frontend_data[puuid]["agent"] = self.uuid_handler.agent_converter(self.ca[puuid])
+            await self.updater_func(on_update)
 
-    async def calc_stats(self, i, on_update=None):
+
+    async def calc_stats(self, puuid, on_update=None):
         stats_list = []
         wl_list = []  # tracks wins and losses
         hs_list = []
-        for match in self.match_stats[self.puuid[i]]:
+        for match in self.match_stats[puuid]:
             for player in match["players"]:
-                if player["subject"] == self.puuid[i]:
+                if player["subject"] == puuid:
                     stats_list.append({
                         "name": player.get("gameName"),
                         "tag": player.get("tagLine"),
@@ -440,14 +421,17 @@ class ValoRank:
                         "level": player.get("accountLevel"),
                         "team": player.get("teamId")
                     })
+
+        for i, match in enumerate(self.match_stats[puuid]):
             for team in match["teams"]:
-                if team["teamId"] == "Red":
+                if team["teamId"] == stats_list[i]["team"]:
                     wl_list.append(team.get("won"))
 
-        for match in self.match_stats[self.puuid[i]]:
+
+        for match in self.match_stats[puuid]:
             for round in match["roundResults"]:
                 for player in round["playerStats"]:
-                    if player["subject"] == self.puuid[i]:
+                    if player["subject"] == puuid:
                         for round2 in player["damage"]:
                             hs_list.append({
                                 "legshots": round2.get("legshots"),
@@ -459,75 +443,72 @@ class ValoRank:
         wins = []
         match_count_wl = 0
         for match in wl_list:
-            team = stats_list[match_count_wl]["team"]
-            if match == 1 and team == "Red":
-                wins.append(1)
-            elif match == 0 and team == "Blue":
-                wins.append(1)
             match_count_wl += 1
-        wl = f"{math.floor(sum(wins) / match_count_wl * 100)}%"
+        wl = f"{math.floor(sum(wl_list) / len(wl_list) * 100)}%"
 
-        kills = []
-        deaths = []
+        score = 0
+        rounds_played = 0
+        for match in stats_list:
+            score += match["stats"]["score"]
+            rounds_played += match["stats"]["roundsPlayed"]
+        acs = score / rounds_played
+
+        kills = 0
+        deaths = 0
         match_count_kd = 0
         for match in stats_list:
             match_count_kd += 1
-            kills.append(match["stats"]["kills"])
-            deaths.append(match["stats"]["deaths"])
-            if sum(kills) == 0:
-                kills.append(1)
-            if sum(deaths) == 0:
-                deaths.append(1)
-        kd = sum(kills) / sum(deaths)
+            kills += match["stats"]["kills"]
+            deaths += match["stats"]["deaths"]
+            if deaths == 0:
+                deaths += 1
+        kd = kills / deaths
 
-        legshots = []
-        bodyshots = []
-        headshots = []
+        legshots = 0
+        bodyshots = 0
+        headshots = 0
         for round in hs_list:
-            legshots.append(round["legshots"])
-            bodyshots.append(round["bodyshots"])
-            headshots.append(round["headshots"])
-        hs = (sum(headshots) / (sum(legshots) + sum(bodyshots) + sum(headshots))) * 100
+            legshots += round["legshots"]
+            bodyshots += round["bodyshots"]
+            headshots += round["headshots"]
+        hs = (headshots / (legshots + bodyshots + headshots)) * 100
 
         if self.handler.player_info:
             for player in self.handler.player_info["Players"]:
-                if player["Subject"] == self.puuid[i]:
+                if player["Subject"] == puuid:
                     bor = player["TeamID"]
         elif self.handler.player_info_pre:
             bor = self.handler.player_info_pre["Teams"][0]["TeamID"]
 
-        if self.mmr[self.puuid[i]]["current_data"]["currenttierpatched"] == "Unrated":
-            self.mmr[self.puuid[i]]["current_data"]["currenttierpatched"] = "Unranked"
-        self.frontend_data[i] = {
+        if self.mmr[puuid]["current_data"]["currenttierpatched"] == "Unrated":
+            self.mmr[puuid]["current_data"]["currenttierpatched"] = "Unranked"
+        self.frontend_data[puuid] = {
             "name": f"{stats_list[0]['name']}#{stats_list[0]['tag']}",
-            "agent": self.uuid_handler.agent_converter(self.ca[i]),
+            "agent": self.uuid_handler.agent_converter(self.ca[puuid]),
             "level": stats_list[0]['level'],
             "matches": match_count_kd,
             "wl": str(wl),
+            "acs": str(acs)[:5],
             "kd": str(kd)[:4],
             "hs": str(hs)[:4],
-            "rank": self.mmr[self.puuid[i]]["current_data"]["currenttierpatched"],
-            "rr": self.mmr[self.puuid[i]]["current_data"]["ranking_in_tier"],
-            "peak_rank": self.mmr[self.puuid[i]]["highest_rank"]["patched_tier"],
-            "peak_act": self.mmr[self.puuid[i]]["highest_rank"]["season"].upper(),
+            "rank": self.mmr[puuid]["current_data"]["currenttierpatched"],
+            "rr": self.mmr[puuid]["current_data"]["ranking_in_tier"],
+            "peak_rank": self.mmr[puuid]["highest_rank"]["patched_tier"],
+            "peak_act": self.mmr[puuid]["highest_rank"]["season"].upper(),
             "team": bor
         }
         await self.updater_func(on_update)
 
         print(
-            f"{stats_list[0]['name']}#{stats_list[0]['tag']}'s ({self.uuid_handler.agent_converter(self.ca[i])}) level is {stats_list[0]['level']} | W/L % in last {match_count_kd} matches: {wl} | KD in last {match_count_kd} matches: {str(kd)[0:4]} | HS in last {match_count_kd} matches: hs is: {str(hs)[:4]}% | current rank is: {self.mmr[self.puuid[i]]['current_data']['currenttierpatched']} | current rr is: {self.mmr[self.puuid[i]]['current_data']['ranking_in_tier']} | highest rank was: {self.mmr[self.puuid[i]]['highest_rank']['patched_tier']} | peak act was: {self.mmr[self.puuid[i]]['highest_rank']['season']}")
-
-        self.used_puuids.append(self.puuid[i])
+            f"{stats_list[0]['name']}#{stats_list[0]['tag']}'s ({self.uuid_handler.agent_converter(self.ca[puuid])}) level is {stats_list[0]['level']} | W/L % in last {match_count_kd} matches: {wl} | ACS in the last {match_count_kd} matches: {str(acs)[:5]} | KD in last {match_count_kd} matches: {str(kd)[0:4]} | HS in last {match_count_kd} matches: hs is: {str(hs)[:4]}% | current rank is: {self.mmr[puuid]['current_data']['currenttierpatched']} | current rr is: {self.mmr[puuid]['current_data']['ranking_in_tier']} | highest rank was: {self.mmr[puuid]['highest_rank']['patched_tier']} | peak act was: {self.mmr[puuid]['highest_rank']['season']}")
 
     async def load_more_matches(self, on_update=None):
-        for index, puuid in enumerate(self.used_puuids):
-            if puuid in self.used_puuids2:
-                continue
-            elif self.zero_check[index] <= 10:
+        for puuid in self.cmp:
+            if self.zero_check[puuid] <= self.start:
                 continue
             else:
                 self.riot_matches_new = requests.get(
-                    f"https://pd.eu.a.pvp.net/match-history/v1/history/{puuid}?startIndex={10}&endIndex={20}&queue=competitive",
+                    f"https://pd.eu.a.pvp.net/match-history/v1/history/{puuid}?startIndex={self.start}&endIndex={self.end}&queue=competitive",
                     headers=self.handler.match_id_header
                 ).json()
 
@@ -549,11 +530,14 @@ class ValoRank:
 
                 await gather_matches()
 
-                await self.calc_stats(index)
+                await self.calc_stats(puuid)
 
                 await self.updater_func(on_update)
 
-                self.used_puuids2.append(puuid)
+                print("load more matches finished")
+
+        self.start += 10
+        self.end += 10
 
     async def fetch(self, session, url, retries=3):
         for attempt in range(retries):
