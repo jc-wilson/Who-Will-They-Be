@@ -1,14 +1,16 @@
+from html import escape
+from urllib.parse import quote
+
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
+    QApplication, QMainWindow,
     QVBoxLayout, QGridLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
-    QComboBox, QSpacerItem, QSizePolicy
+    QComboBox, QFrame, QSplitter, QScrollArea, QStackedWidget, QToolButton,
+    QButtonGroup
 )
-from PySide6.QtCore import (Qt, QTimer, Slot, QUrl, QSize)
-from PySide6.QtGui import (QPixmap, QIcon, QColor, QBrush, QDesktopServices, QFontDatabase, QFont)
+from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QPixmap, QIcon, QFontDatabase, QFont
 import sys
 import os
-import aiohttp
-import requests
 import asyncio
 import qasync
 from core.api_client import ValoRank
@@ -49,11 +51,12 @@ class ValorantStatsWindow(QMainWindow):
             print("⚠️ Failed to load custom font, falling back to default.")
 
         self.setWindowTitle("Who Will They Be")
-        self.setMinimumSize(1500, 350)
+        self.setMinimumSize(1500, 720)
         self.setWindowIcon(QIcon(resource_path("assets/logoone.png")))
 
         # Instalock agent list
-        self.agent_label = QLabel("Choose your agent:")
+        self.agent_label = QLabel("Agent")
+        self.agent_label.setObjectName("sectionLabel")
         self.combo = QComboBox()
         self.combo.currentTextChanged.connect(self.on_selection_changed)
         self.combo.addItems([
@@ -63,381 +66,1041 @@ class ValorantStatsWindow(QMainWindow):
             "Skye", "Sova", "Tejo", "Veto", "Viper", "Vyse", "Waylay", "Yoru"
         ])
         self.combo.setCurrentIndex(4)
+        self.combo.setMinimumWidth(200)
+        self.agent = uuid_handler.agent_converter_reversed(self.combo.currentText())
 
-        # Lock Agent Button
+        # Primary actions
         self.lock_agent_button = QPushButton("Lock Agent")
         self.lock_agent_button.clicked.connect(self.instalock_agent)
+        self.lock_agent_button.setObjectName("accentButton")
 
-        # Current Gamemode
-        self.gamemode_label = QLabel("Gamemode:")
-        self.gamemode_label.setStyleSheet("color: #aaa;")
-        self.gamemode_value = QLabel("Unknown")  # dynamic value
-        self.gamemode_value.setStyleSheet("font-weight: 600; color: white;")
-
-        gamemode_row = QHBoxLayout()
-        gamemode_row.addWidget(self.gamemode_label)
-        gamemode_row.addWidget(self.gamemode_value)
-        gamemode_row.addStretch(1)  # optional, pushes text left
-
-        # Current Server
-        self.server_label = QLabel("Server:")
-        self.server_label.setStyleSheet("color: #aaa;")
-        self.server_value = QLabel("Unknown")  # dynamic value
-        self.server_value.setStyleSheet("font-weight: 600; color: white;")
-
-        server_row = QHBoxLayout()
-        server_row.addWidget(self.server_label)
-        server_row.addWidget(self.server_value)
-        server_row.addStretch(1)
-
-        # Refresh Button
-        self.refresh_button = QPushButton()
-        self.refresh_button.setIcon(QIcon(resource_path("assets/refresh.png")))
-        self.refresh_button.setIconSize(QtCore.QSize(48, 48))
-        self.refresh_button.setFlat(True)
-        self.refresh_button.clicked.connect(self.run_valo_stats)
-
-        # Load More Matches Button (10)
         self.load_more_matches_button = QPushButton("Load More Matches (10)")
         self.load_more_matches_button.clicked.connect(self.run_load_more_matches_button)
+        self.load_more_matches_button.setObjectName("secondaryButton")
 
-        # Dodge Button
         self.dodge_button = QPushButton("Dodge Game")
         self.dodge_button.clicked.connect(self.run_dodge_button)
+        self.dodge_button.setObjectName("dodgeButton")
 
-        # Two tables (left and right)
-        self.table_left = self.create_table()
-        self.table_right = self.create_table()
+        self.refresh_button = QPushButton()
+        self.refresh_button.setIcon(QIcon(resource_path("assets/refresh.png")))
+        self.refresh_button.setObjectName("refreshButton")
+        self.refresh_button.setIconSize(QSize(52, 52))
+        self.refresh_button.setFixedSize(52, 52)
+        self.refresh_button.clicked.connect(self.run_valo_stats)
 
-        # Synchronize scrolling between tables
-        self.table_left.verticalScrollBar().valueChanged.connect(
-            self.table_right.verticalScrollBar().setValue
-        )
-        self.table_right.verticalScrollBar().valueChanged.connect(
-            self.table_left.verticalScrollBar().setValue
-        )
+        # Meta display chips
+        self.gamemode_chip, self.gamemode_value = self.build_meta_chip("Gamemode")
+        self.server_chip, self.server_value = self.build_meta_chip("Server")
 
-        # Preload agent icons
+        # View toggle control
+        self.view_toggle = self.build_view_toggle()
+        self.view_mode = "cards"
+
+        # Preload assets
         from core.asset_loader import download_and_cache_agent_icons
         self.agent_icons = download_and_cache_agent_icons()
 
-        # Preload rank icons
         from core.asset_loader import download_and_cache_rank_icons
         self.rank_icons = download_and_cache_rank_icons()
 
-        # Split players by team
-        # Populate tables if data provided
-        if players:
-            self.load_players(players)
-
         # ─────────────── Layout ───────────────
+        header_frame = QFrame()
+        header_frame.setObjectName("headerFrame")
+        header_layout = QVBoxLayout(header_frame)
+        header_layout.setContentsMargins(18, 15, 18, 14)
+        header_layout.setSpacing(14)
 
-        # Grid layout for the center section (2 lines)
-        center_grid = QGridLayout()
-        center_grid.setHorizontalSpacing(8)
-        center_grid.setVerticalSpacing(6)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(18)
 
-        # Line 1 → "Choose your agent" + dropdown (centered)
-        agent_row = QHBoxLayout()
-        agent_row.setSpacing(8)
-        agent_row.setAlignment(Qt.AlignCenter)
-        agent_row.addWidget(self.agent_label)
-        agent_row.addWidget(self.combo)
-        center_grid.addLayout(agent_row, 0, 0, 1, 1)
+        title_block = QVBoxLayout()
+        title_block.setSpacing(4)
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(12)
+        chip_row.addWidget(self.gamemode_chip)
+        chip_row.addWidget(self.server_chip)
+        chip_row.addStretch(1)
+        title_block.addLayout(chip_row)
 
-        # Line 2 → 3 buttons centered
-        button_row = QHBoxLayout()
-        button_row.setSpacing(10)
-        button_row.setAlignment(Qt.AlignCenter)
-        button_row.addWidget(self.dodge_button)
-        button_row.addWidget(self.load_more_matches_button)
-        button_row.addWidget(self.lock_agent_button)
-        center_grid.addLayout(button_row, 1, 0, 1, 1)
+        title_row.addLayout(title_block, stretch=1)
+        title_row.addWidget(self.view_toggle, alignment=Qt.AlignVCenter)
+        title_row.addWidget(self.refresh_button, alignment=Qt.AlignVCenter)
+        header_layout.addLayout(title_row)
 
-        # 🆕 Top-left vertical layout for the labels
-        left_labels = QVBoxLayout()
-        left_labels.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        left_labels.setSpacing(2)
-        left_labels.addLayout(gamemode_row)
-        left_labels.addLayout(server_row)
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(14)
 
-        # Parent horizontal layout to center everything and keep refresh button aligned right
-        top_section = QHBoxLayout()
-        top_section.setContentsMargins(10, 10, 10, 0)
+        agent_block = QFrame()
+        agent_block.setObjectName("agentBlock")
+        agent_layout = QHBoxLayout(agent_block)
+        agent_layout.setContentsMargins(11, 8, 11, 8)
+        agent_layout.setSpacing(10)
+        agent_layout.addWidget(self.agent_label)
+        agent_layout.addWidget(self.combo)
+        agent_layout.addWidget(self.lock_agent_button)
 
-        # 🆕 Add the stacked labels on the left
-        top_section.addLayout(left_labels)
+        controls_row.addWidget(agent_block, stretch=0)
+        controls_row.addStretch(1)
+        controls_row.addWidget(self.dodge_button)
+        controls_row.addWidget(self.load_more_matches_button)
+        header_layout.addLayout(controls_row)
 
-        # Center section
-        top_section.addStretch(1)
-        top_section.addLayout(center_grid)
-        top_section.addStretch(1)
+        # Views
+        left_card_panel, self.card_left_layout = self.build_card_team_panel("red")
+        right_card_panel, self.card_right_layout = self.build_card_team_panel("blue")
 
-        # Refresh button on the right
-        top_section.addWidget(self.refresh_button, alignment=Qt.AlignRight | Qt.AlignVCenter)
+        card_splitter = QSplitter(Qt.Horizontal)
+        card_splitter.addWidget(left_card_panel)
+        card_splitter.addWidget(right_card_panel)
+        card_splitter.setChildrenCollapsible(False)
+        card_splitter.setOpaqueResize(True)
+        card_splitter.setHandleWidth(4)
+        card_splitter.setSizes([750, 750])
 
-        # Tables layout
-        tables_layout = QHBoxLayout()
-        tables_layout.addWidget(self.table_left)
-        tables_layout.addWidget(self.table_right)
+        left_compact_panel, self.compact_left_layout = self.build_compact_team_panel("red")
+        right_compact_panel, self.compact_right_layout = self.build_compact_team_panel("blue")
 
-        # Combine everything
+        compact_container = QWidget()
+        compact_layout = QHBoxLayout(compact_container)
+        compact_layout.setContentsMargins(0, 0, 0, 0)
+        compact_layout.setSpacing(20)
+        compact_layout.addWidget(left_compact_panel)
+        compact_layout.addWidget(right_compact_panel)
+
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(card_splitter)
+        self.view_stack.addWidget(compact_container)
+
         layout = QVBoxLayout()
-        layout.addLayout(top_section)
-        layout.addLayout(tables_layout)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(20)
+        layout.addWidget(header_frame)
+        layout.addWidget(self.view_stack, 1)
 
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
 
+        self.apply_theme()
+        self.set_view_mode("cards")
+
+        # Populate players if initial data provided
+        if players:
+            self.load_players(players)
+
     # ---------------------------------------------------------
     # Utility setup methods
     # ---------------------------------------------------------
-    def create_table(self):
-        table = QTableWidget()
-        table.setColumnCount(12)
-        table.setHorizontalHeaderLabels(["Name", "Agent", "Level", "Matches", "W/L", "ACS", "KD", "HS", "Rank", "RR", "Peak Rank", "Peak Act"])
-        table.verticalHeader().setVisible(False)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        table.setAlternatingRowColors(True)
-        table.setSortingEnabled(True)
-        table.cellClicked.connect(self.on_cell_clicked)
-        return table
+    def build_meta_chip(self, label_text):
+        chip = QFrame()
+        chip.setObjectName("metaChip")
+        layout = QVBoxLayout(chip)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(4)
 
-    def on_cell_clicked(self, row, column):
-        if column == 0:
-            sender_table = self.sender()
-            item = sender_table.item(row, column)
-            if item:
-                text = item.text()
-                safe_text = text.replace("#", "%23")
-                QDesktopServices.openUrl(QUrl(
-                    f"https://tracker.gg/valorant/profile/riot/{safe_text}/overview?platform=pc&playlist=competitive&season=4c4b8cff-43eb-13d3-8f14-96b783c90cd2"
-                ))
+        label = QLabel(label_text)
+        label.setObjectName("metaLabel")
+        value = QLabel("Unknown")
+        value.setObjectName("metaValue")
+
+        layout.addWidget(label)
+        layout.addWidget(value)
+
+        return chip, value
+
+    def build_view_toggle(self):
+        container = QFrame()
+        container.setObjectName("viewToggle")
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(6)
+
+        button_group = QButtonGroup(container)
+        button_group.setExclusive(True)
+
+        options = [
+            ("Expanded", "cards"),
+            ("Compact", "compact"),
+        ]
+
+        self.view_buttons = {}
+        for index, (text, mode) in enumerate(options):
+            button = QToolButton()
+            button.setObjectName("viewToggleButton")
+            button.setText(text)
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            layout.addWidget(button)
+            button_group.addButton(button, index)
+            button.clicked.connect(lambda checked, m=mode: self.set_view_mode(m))
+            self.view_buttons[mode] = button
+
+        self.view_button_group = button_group
+        return container
+
+    def set_view_mode(self, mode):
+        if not hasattr(self, "view_stack"):
+            return
+
+        index = 0 if mode == "cards" else 1
+        if mode not in ("cards", "compact"):
+            return
+
+        self.view_stack.setCurrentIndex(index)
+        self.view_mode = mode
+
+        if hasattr(self, "view_buttons"):
+            for key, button in self.view_buttons.items():
+                button.blockSignals(True)
+                button.setChecked(key == mode)
+                button.blockSignals(False)
+
+    def build_card_team_panel(self, colour_key):
+        panel = QFrame()
+        panel.setObjectName("teamPanel")
+        panel.setProperty("teamColor", colour_key)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(15, 12, 15, 15)
+        panel_layout.setSpacing(12)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+        content_layout.setAlignment(Qt.AlignTop)
+
+        scroll_area.setWidget(content)
+        panel_layout.addWidget(scroll_area)
+        return panel, content_layout
+
+    def build_compact_team_panel(self, colour_key):
+        panel = QFrame()
+        panel.setObjectName("compactPanel")
+        panel.setProperty("teamColor", colour_key)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(15, 12, 15, 15)
+        panel_layout.setSpacing(12)
+
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(10)
+        content_layout.setAlignment(Qt.AlignTop)
+        panel_layout.addLayout(content_layout)
+
+        return panel, content_layout
+
+    def clear_layout(self, layout):
+        if layout is None:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+            elif item.layout():
+                self.clear_layout(item.layout())
+
+    def build_tracker_url(self, riot_id):
+        safe_text = quote(str(riot_id), safe="")
+        return (
+            "https://tracker.gg/valorant/profile/riot/"
+            f"{safe_text}/overview?platform=pc&playlist=competitive&season=4c4b8cff-43eb-13d3-8f14-96b783c90cd2"
+        )
+
+    def create_stat_widget(self, title, value):
+        wrapper = QFrame()
+        wrapper.setObjectName("statWidget")
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        title_label = QLabel(title.upper())
+        title_label.setObjectName("statTitle")
+        value_label = QLabel(value)
+        value_label.setObjectName("statValue")
+        layout.addWidget(title_label)
+        layout.addWidget(value_label)
+        return wrapper, value_label
+
+    def create_compact_stat(self, title, value):
+        wrapper = QFrame()
+        wrapper.setObjectName("compactStat")
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.setSpacing(2)
+
+        title_label = QLabel(title.upper())
+        title_label.setObjectName("compactStatTitle")
+        value_label = QLabel(value)
+        value_label.setObjectName("compactStatValue")
+        layout.addWidget(title_label)
+        layout.addWidget(value_label)
+        return wrapper, value_label
+
+    def create_player_card(self, player):
+        card = QFrame()
+        card.setObjectName("playerCard")
+        card.setMinimumHeight(130)
+
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(14, 12, 14, 12)
+        card_layout.setSpacing(24)
+
+        agent_icon_label = QLabel()
+        agent_icon_label.setObjectName("agentIcon")
+        agent_icon_label.setFixedSize(64, 64)
+        agent_icon_label.setAlignment(Qt.AlignCenter)
+
+        agent_name = str(player.get("agent", "Unknown"))
+        agent_icon = self.agent_icons.get(agent_name)
+        if agent_icon:
+            agent_icon_label.setPixmap(
+                agent_icon.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        else:
+            agent_icon_label.setText(agent_name)
+        card_layout.addWidget(agent_icon_label)
+
+        info_column = QVBoxLayout()
+        info_column.setContentsMargins(0, 0, 0, 0)
+        info_column.setSpacing(12)
+
+        # Name and level row
+        name_row = QHBoxLayout()
+        name_row.setSpacing(12)
+
+        player_name = str(player.get("name", "Unknown"))
+        name_label = QLabel()
+        name_label.setObjectName("playerName")
+        name_label.setTextFormat(Qt.RichText)
+        name_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        name_label.setOpenExternalLinks(True)
+        name_label.setText(
+            f"<a href='{self.build_tracker_url(player_name)}'>{escape(player_name)}</a>"
+        )
+        name_row.addWidget(name_label, 1)
+
+        level_value = player.get("level", "N/A")
+        level_label = QLabel(f"Lv. {level_value}")
+        level_label.setObjectName("playerLevel")
+        name_row.addWidget(level_label, alignment=Qt.AlignRight)
+        info_column.addLayout(name_row)
+
+        # Rank and peak information
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(20)
+
+        rank_container = QVBoxLayout()
+        rank_container.setSpacing(6)
+        rank_title = QLabel("Rank")
+        rank_title.setObjectName("metaTitle")
+        rank_container.addWidget(rank_title)
+
+        rank_display = QHBoxLayout()
+        rank_display.setSpacing(10)
+
+        rank_icon_label = QLabel()
+        rank_icon_label.setObjectName("rankIcon")
+        rank_icon_label.setFixedSize(44, 44)
+        rank_icon_label.setAlignment(Qt.AlignCenter)
+
+        rank_name = str(player.get("rank", "Unknown"))
+        rank_icon = self.rank_icons.get(rank_name)
+        if rank_icon:
+            rank_icon_label.setPixmap(
+                rank_icon.scaled(44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        else:
+            rank_icon_label.setText(rank_name if rank_name not in ("[]", "") else "N/A")
+        rank_display.addWidget(rank_icon_label)
+
+        rank_text = QLabel(rank_name if rank_name not in ("[]", "") else "N/A")
+        rank_text.setObjectName("metaValue")
+        rank_display.addWidget(rank_text)
+
+        rr_value = str(player.get("rr", "N/A"))
+        rr_label = QLabel("RR N/A" if rr_value == "N/A" else f"{rr_value} RR")
+        rr_label.setObjectName("metaAux")
+        rank_display.addWidget(rr_label)
+
+        rank_display.addStretch(1)
+        rank_container.addLayout(rank_display)
+        meta_row.addLayout(rank_container)
+
+        peak_container = QVBoxLayout()
+        peak_container.setSpacing(6)
+        peak_title = QLabel("Peak Rank")
+        peak_title.setObjectName("metaTitle")
+        peak_container.addWidget(peak_title)
+
+        peak_display = QHBoxLayout()
+        peak_display.setSpacing(10)
+
+        peak_icon_label = QLabel()
+        peak_icon_label.setObjectName("peakIcon")
+        peak_icon_label.setFixedSize(44, 44)
+        peak_icon_label.setAlignment(Qt.AlignCenter)
+
+        peak_name = str(player.get("peak_rank", "Unknown"))
+        peak_icon = self.rank_icons.get(peak_name)
+        if peak_icon:
+            peak_icon_label.setPixmap(
+                peak_icon.scaled(44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        elif peak_name == "[]":
+            peak_icon_label.setText("N/A")
+        else:
+            peak_icon_label.setText(peak_name)
+        peak_display.addWidget(peak_icon_label)
+
+        peak_text = QLabel(peak_name if peak_name not in ("[]", "") else "N/A")
+        peak_text.setObjectName("metaValue")
+        peak_display.addWidget(peak_text)
+
+        peak_display.addStretch(1)
+        peak_container.addLayout(peak_display)
+        meta_row.addLayout(peak_container)
+
+        info_column.addLayout(meta_row)
+
+        stats_grid = QGridLayout()
+        stats_grid.setHorizontalSpacing(24)
+        stats_grid.setVerticalSpacing(10)
+
+        matches_value = str(player.get("matches", 0))
+        matches_widget, _ = self.create_stat_widget("Matches", matches_value)
+        stats_grid.addWidget(matches_widget, 0, 0)
+
+        wl_value = str(player.get("wl", "N/A"))
+        wl_widget, wl_label = self.create_stat_widget("W/L", wl_value)
+        self.apply_stat_colour(wl_label, wl_value, "wl")
+        stats_grid.addWidget(wl_widget, 0, 1)
+
+        acs_value = str(player.get("acs", "N/A"))
+        acs_widget, acs_label = self.create_stat_widget("ACS", acs_value)
+        self.apply_stat_colour(acs_label, acs_value, "acs")
+        stats_grid.addWidget(acs_widget, 0, 2)
+
+        kd_value = str(player.get("kd", "N/A"))
+        kd_widget, kd_label = self.create_stat_widget("KD", kd_value)
+        self.apply_stat_colour(kd_label, kd_value, "kd")
+        stats_grid.addWidget(kd_widget, 1, 0)
+
+        hs_raw = player.get("hs", "N/A")
+        hs_value = f"{hs_raw}%" if str(hs_raw) not in ("N/A", "[]") else str(hs_raw)
+        hs_widget, hs_label = self.create_stat_widget("HS", hs_value)
+        self.apply_stat_colour(hs_label, str(hs_raw), "hs")
+        stats_grid.addWidget(hs_widget, 1, 1)
+
+        peak_act_value = str(player.get("peak_act", "N/A"))
+        peak_act_widget, _ = self.create_stat_widget("Peak Act", peak_act_value)
+        stats_grid.addWidget(peak_act_widget, 1, 2)
+
+        info_column.addLayout(stats_grid)
+        card_layout.addLayout(info_column, 1)
+
+        return card
+
+    def create_compact_player_row(self, player):
+        row = QFrame()
+        row.setObjectName("compactRow")
+
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 9, 12, 9)
+        row_layout.setSpacing(18)
+
+        agent_icon_label = QLabel()
+        agent_icon_label.setObjectName("compactAgentIcon")
+        agent_icon_label.setFixedSize(48, 48)
+        agent_icon_label.setAlignment(Qt.AlignCenter)
+
+        agent_name = str(player.get("agent", "Unknown"))
+        agent_icon = self.agent_icons.get(agent_name)
+        if agent_icon:
+            agent_icon_label.setPixmap(
+                agent_icon.scaled(44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        else:
+            agent_icon_label.setText(agent_name)
+
+        row_layout.addWidget(agent_icon_label)
+
+        info_column = QVBoxLayout()
+        info_column.setContentsMargins(0, 0, 0, 0)
+        info_column.setSpacing(6)
+
+        name_row = QHBoxLayout()
+        name_row.setSpacing(12)
+
+        player_name = str(player.get("name", "Unknown"))
+        name_label = QLabel()
+        name_label.setObjectName("playerName")
+        name_label.setTextFormat(Qt.RichText)
+        name_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        name_label.setOpenExternalLinks(True)
+        name_label.setText(
+            f"<a href='{self.build_tracker_url(player_name)}'>{escape(player_name)}</a>"
+        )
+        name_row.addWidget(name_label, 1)
+
+        level_value = player.get("level", "N/A")
+        level_label = QLabel(f"Lv. {level_value}")
+        level_label.setObjectName("playerLevel")
+        name_row.addWidget(level_label, alignment=Qt.AlignRight)
+
+        info_column.addLayout(name_row)
+
+        meta_bar = QHBoxLayout()
+        meta_bar.setSpacing(12)
+
+        agent_badge = QLabel(agent_name)
+        agent_badge.setObjectName("agentBadge")
+        meta_bar.addWidget(agent_badge)
+
+        rank_icon_label = QLabel()
+        rank_icon_label.setObjectName("compactRankIcon")
+        rank_icon_label.setFixedSize(32, 32)
+        rank_icon_label.setAlignment(Qt.AlignCenter)
+
+        rank_name = str(player.get("rank", "Unknown"))
+        rank_icon = self.rank_icons.get(rank_name)
+        if rank_icon:
+            rank_icon_label.setPixmap(
+                rank_icon.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        else:
+            rank_icon_label.setText(rank_name if rank_name not in ("[]", "") else "N/A")
+        meta_bar.addWidget(rank_icon_label)
+
+        rank_text = QLabel(rank_name if rank_name not in ("[]", "") else "N/A")
+        rank_text.setObjectName("metaValue")
+        meta_bar.addWidget(rank_text)
+
+        rr_value = str(player.get("rr", "N/A"))
+        rr_label = QLabel("RR N/A" if rr_value == "N/A" else f"{rr_value} RR")
+        rr_label.setObjectName("metaAux")
+        meta_bar.addWidget(rr_label)
+
+        peak_icon_label = QLabel()
+        peak_icon_label.setObjectName("compactRankIcon")
+        peak_icon_label.setFixedSize(32, 32)
+        peak_icon_label.setAlignment(Qt.AlignCenter)
+
+        peak_name = str(player.get("peak_rank", "Unknown"))
+        peak_icon = self.rank_icons.get(peak_name)
+        if peak_icon:
+            peak_icon_label.setPixmap(
+                peak_icon.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        elif peak_name == "[]":
+            peak_icon_label.setText("N/A")
+        else:
+            peak_icon_label.setText(peak_name)
+        meta_bar.addWidget(peak_icon_label)
+
+        peak_text = QLabel(peak_name if peak_name not in ("[]", "") else "N/A")
+        peak_text.setObjectName("metaValue")
+        meta_bar.addWidget(peak_text)
+
+        peak_act_value = str(player.get("peak_act", "N/A"))
+        peak_act_label = QLabel(
+            peak_act_value if peak_act_value not in ("[]", "") else "Act N/A"
+        )
+        peak_act_label.setObjectName("metaAux")
+        meta_bar.addWidget(peak_act_label)
+
+        meta_bar.addStretch(1)
+        info_column.addLayout(meta_bar)
+
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(10)
+
+        matches_value = str(player.get("matches", 0))
+        matches_widget, _ = self.create_compact_stat("Matches", matches_value)
+        stats_row.addWidget(matches_widget)
+
+        wl_value = str(player.get("wl", "N/A"))
+        wl_widget, wl_label = self.create_compact_stat("W/L", wl_value)
+        self.apply_stat_colour(wl_label, wl_value, "wl")
+        stats_row.addWidget(wl_widget)
+
+        acs_value = str(player.get("acs", "N/A"))
+        acs_widget, acs_label = self.create_compact_stat("ACS", acs_value)
+        self.apply_stat_colour(acs_label, acs_value, "acs")
+        stats_row.addWidget(acs_widget)
+
+        kd_value = str(player.get("kd", "N/A"))
+        kd_widget, kd_label = self.create_compact_stat("KD", kd_value)
+        self.apply_stat_colour(kd_label, kd_value, "kd")
+        stats_row.addWidget(kd_widget)
+
+        hs_raw = player.get("hs", "N/A")
+        hs_value = f"{hs_raw}%" if str(hs_raw) not in ("N/A", "[]") else str(hs_raw)
+        hs_widget, hs_label = self.create_compact_stat("HS", hs_value)
+        self.apply_stat_colour(hs_label, str(hs_raw), "hs")
+        stats_row.addWidget(hs_widget)
+
+        info_column.addLayout(stats_row)
+
+        row_layout.addLayout(info_column, 1)
+
+        return row
+
+    def apply_stat_colour(self, label, value, category):
+        colour = None
+        try:
+            if category == "wl":
+                val = float(str(value).replace("%", ""))
+                if val < 47:
+                    colour = "red"
+                elif val < 53:
+                    colour = "gold"
+                elif val < 60:
+                    colour = "limegreen"
+                else:
+                    colour = "cyan"
+            elif category == "acs":
+                val = float(value)
+                if val < 200:
+                    colour = "red"
+                elif val < 225:
+                    colour = "gold"
+                elif val < 250:
+                    colour = "limegreen"
+                else:
+                    colour = "cyan"
+            elif category == "kd":
+                val = float(value)
+                if val < 0.9:
+                    colour = "red"
+                elif val < 1.1:
+                    colour = "gold"
+                elif val < 1.25:
+                    colour = "limegreen"
+                else:
+                    colour = "cyan"
+            elif category == "hs":
+                val = float(value)
+                if val < 20:
+                    colour = "red"
+                elif val < 30:
+                    colour = "gold"
+                elif val < 40:
+                    colour = "limegreen"
+                else:
+                    colour = "cyan"
+        except (TypeError, ValueError):
+            colour = None
+
+        if colour:
+            label.setStyleSheet(f"color: {colour};")
+
+    def apply_theme(self):
+        base_style = (
+            "QMainWindow {"
+            " background-color: #05070c;"
+            "}"
+            "QWidget {"
+            " color: #f4f6ff;"
+            " font-size: 13px;"
+            "}"
+            "QFrame#headerFrame {"
+            " background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+            "  stop:0 #101626, stop:1 #070a11);"
+            " border-radius: 22px;"
+            " border: 1px solid rgba(63, 76, 107, 0.45);"
+            " padding: 3px;"
+            "}"
+            "QLabel#appTitle {"
+            " font-size: 24px;"
+            " font-weight: 800;"
+            " letter-spacing: 1.4px;"
+            "}"
+            "QLabel#sectionLabel {"
+            " color: #9aa4c4;"
+            " font-size: 12px;"
+            " letter-spacing: 1.6px;"
+            " text-transform: uppercase;"
+            " font-weight: 700;"
+            "}"
+            "QFrame#agentBlock {"
+            " background-color: rgba(13, 19, 30, 0.92);"
+            " border-radius: 16px;"
+            " border: 1px solid rgba(63, 76, 107, 0.35);"
+            "}"
+            "QFrame#metaChip {"
+            " background-color: rgba(15, 22, 35, 0.88);"
+            " border-radius: 14px;"
+            " border: 1px solid rgba(63, 76, 107, 0.35);"
+            " min-width: 160px;"
+            "}"
+            "QFrame#viewToggle {"
+            " background-color: rgba(18, 27, 42, 0.9);"
+            " border-radius: 18px;"
+            " border: 1px solid rgba(63, 76, 107, 0.4);"
+            "}"
+            "QToolButton#viewToggleButton {"
+            " background: transparent;"
+            " border: none;"
+            " color: #8f9abd;"
+            " font-weight: 600;"
+            " padding: 6px 14px;"
+            " border-radius: 14px;"
+            "}"
+            "QToolButton#viewToggleButton:hover {"
+            " background-color: rgba(53, 92, 255, 0.15);"
+            " color: #c7d3ff;"
+            "}"
+            "QToolButton#viewToggleButton:checked {"
+            " background-color: #355cff;"
+            " color: #ffffff;"
+            "}"
+            "QFrame#teamPanel, QFrame#compactPanel {"
+            " background-color: rgba(11, 15, 25, 0.92);"
+            " border-radius: 22px;"
+            " border: 1px solid rgba(63, 76, 107, 0.35);"
+            "}"
+            "QFrame#compactRow {"
+            " background-color: rgba(13, 18, 30, 0.92);"
+            " border-radius: 16px;"
+            " border: 1px solid rgba(63, 76, 107, 0.3);"
+            "}"
+            "QFrame#compactRow:hover {"
+            " border: 1px solid rgba(86, 104, 138, 0.6);"
+            "}"
+            "QLabel#agentBadge {"
+            " background-color: rgba(53, 92, 255, 0.18);"
+            " color: #a7bbff;"
+            " border-radius: 12px;"
+            " padding: 3px 8px;"
+            " font-size: 11px;"
+            " letter-spacing: 1.2px;"
+            " text-transform: uppercase;"
+            " font-weight: 700;"
+            "}"
+            "QLabel#metaLabel {"
+            " color: #7e8aa7;"
+            " font-size: 12px;"
+            " letter-spacing: 1.6px;"
+            " text-transform: uppercase;"
+            "}"
+            "QLabel#metaValue {"
+            " font-size: 16px;"
+            " font-weight: 700;"
+            " color: #f7f8ff;"
+            "}"
+            "QLabel#metaAux {"
+            " color: #8b96b6;"
+            " font-size: 12px;"
+            "}"
+            "QLabel#metaTitle {"
+            " color: #7e8aa7;"
+            " font-size: 11px;"
+            " letter-spacing: 1.2px;"
+            " text-transform: uppercase;"
+            "}"
+            "QLabel#playerName {"
+            " font-size: 18px;"
+            " font-weight: 700;"
+            " color: #f7f8ff;"
+            "}"
+            "QLabel#playerName a {"
+            " color: inherit;"
+            " text-decoration: none;"
+            "}"
+            "QLabel#playerName a:hover {"
+            " color: #6bc2ff;"
+            "}"
+            "QLabel#playerLevel {"
+            " color: #9aa4c4;"
+            " font-size: 13px;"
+            " font-weight: 600;"
+            " letter-spacing: 0.8px;"
+            "}"
+            "QLabel#emptyState {"
+            " color: #7e8aa7;"
+            " font-style: italic;"
+            " letter-spacing: 0.6px;"
+            "}"
+            "QFrame#playerCard {"
+            " background-color: rgba(13, 18, 30, 0.92);"
+            " border-radius: 18px;"
+            " border: 1px solid rgba(63, 76, 107, 0.35);"
+            "}"
+            "QFrame#playerCard:hover {"
+            " border: 1px solid rgba(86, 104, 138, 0.65);"
+            "}"
+            "QFrame#compactStat {"
+            " background-color: rgba(20, 28, 44, 0.82);"
+            " border-radius: 12px;"
+            " padding: 6px 9px;"
+            "}"
+            "QFrame#statWidget {"
+            " background-color: rgba(20, 28, 44, 0.85);"
+            " border-radius: 12px;"
+            " padding: 9px 11px;"
+            "}"
+            "QLabel#statTitle {"
+            " color: #7e8aa7;"
+            " font-size: 11px;"
+            " letter-spacing: 1.2px;"
+            " text-transform: uppercase;"
+            "}"
+            "QLabel#statValue {"
+            " font-size: 16px;"
+            " font-weight: 600;"
+            " color: #f4f6ff;"
+            "}"
+            "QLabel#compactStatTitle {"
+            " color: #7e8aa7;"
+            " font-size: 10px;"
+            " letter-spacing: 1.2px;"
+            " text-transform: uppercase;"
+            "}"
+            "QLabel#compactStatValue {"
+            " font-size: 14px;"
+            " font-weight: 600;"
+            " color: #f4f6ff;"
+            "}"
+            "QLabel#compactStatValue[style*=color] {"
+            " font-weight: 700;"
+            "}"
+            "QScrollArea {"
+            " background: transparent;"
+            " border: none;"
+            "}"
+            "QScrollArea > QWidget > QWidget {"
+            " background: transparent;"
+            "}"
+            "QPushButton {"
+            " background-color: #162133;"
+            " border-radius: 14px;"
+            " padding: 9px 17px;"
+            " color: #f4f6ff;"
+            " border: 1px solid rgba(86, 104, 138, 0.6);"
+            " font-weight: 600;"
+            " letter-spacing: 0.6px;"
+            "}"
+            "QPushButton:hover {"
+            " background-color: #1e2c44;"
+            "}"
+            "QPushButton:pressed {"
+            " background-color: #121b2b;"
+            "}"
+            "QPushButton:disabled {"
+            " background-color: #0d121c;"
+            " color: #5d6577;"
+            " border: 1px solid #151b29;"
+            "}"
+            "QPushButton#accentButton {"
+            " background-color: #355cff;"
+            " border: none;"
+            "}"
+            "QPushButton#accentButton:hover {"
+            " background-color: #4668ff;"
+            "}"
+            "QPushButton#accentButton:pressed {"
+            " background-color: #2a4bd1;"
+            "}"
+            "QPushButton#secondaryButton {"
+            " background-color: rgba(26, 41, 64, 0.85);"
+            "}"
+            "QPushButton#dodgeButton {"
+            " background-color: #b94a48;"
+            " border: none;"
+            "}"
+            "QPushButton#dodgeButton:hover {"
+            " background-color: #c55b59;"
+            "}"
+            "QPushButton#dodgeButton:pressed {"
+            " background-color: #a14341;"
+            "}"
+            "QPushButton#refreshButton {"
+            " background-color: rgba(26, 39, 60, 0.85);"
+            " border-radius: 26px;"
+            " border: 1px solid rgba(86, 104, 138, 0.6);"
+            " padding: 9px;"
+            "}"
+            "QPushButton#refreshButton:hover {"
+            " background-color: rgba(44, 63, 95, 0.95);"
+            "}"
+            "QComboBox {"
+            " background-color: rgba(23, 34, 52, 0.85);"
+            " border-radius: 12px;"
+            " padding: 8px 12px;"
+            " border: 1px solid rgba(86, 104, 138, 0.6);"
+            " font-weight: 600;"
+            " letter-spacing: 0.5px;"
+            "}"
+            "QComboBox::drop-down {"
+            " border: none;"
+            " width: 24px;"
+            "}"
+            "QComboBox::down-arrow {"
+            " image: none;"
+            "}"
+            "QScrollBar:vertical {"
+            " background: transparent;"
+            " width: 14px;"
+            " margin: 18px 6px 18px 6px;"
+            "}"
+            "QScrollBar::handle:vertical {"
+            " background: rgba(66, 86, 124, 0.8);"
+            " min-height: 32px;"
+            " border-radius: 7px;"
+            "}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+            " background: none;"
+            " height: 0px;"
+            "}"
+            "QScrollBar:horizontal {"
+            " background: transparent;"
+            " height: 14px;"
+            " margin: 6px 18px 6px 18px;"
+            "}"
+            "QScrollBar::handle:horizontal {"
+            " background: rgba(66, 86, 124, 0.8);"
+            " min-width: 32px;"
+            " border-radius: 7px;"
+            "}"
+            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {"
+            " background: none;"
+            " width: 0px;"
+            "}"
+        )
+
+        self.setStyleSheet(base_style)
 
     def on_selection_changed(self, text):
         self.agent = uuid_handler.agent_converter_reversed(text)
 
     def instalock_agent(self):
         self.lock_agent_button.setEnabled(False)
-        instalock_agent(self.agent)
-        self.lock_agent_button.setEnabled(True)
+        try:
+            instalock_agent(self.agent)
+        finally:
+            self.lock_agent_button.setEnabled(True)
 
     def safe_load_players(self, data):
         QTimer.singleShot(0, lambda: self.load_players(data))
 
     def run_dodge_button(self):
-        self.dodge_button.setEnabled(False)
-        asyncio.create_task(dodge_game.dodge_func())
-        self.dodge_button.setEnabled(True)
+        if self.dodge_button.isEnabled():
+            self.dodge_button.setEnabled(False)
+            asyncio.create_task(self._dodge_async())
+
+    async def _dodge_async(self):
+        try:
+            await dodge_game.dodge_func()
+        finally:
+            self.dodge_button.setEnabled(True)
 
     def run_valo_stats(self):
         """Run the async refresh task without blocking UI"""
         asyncio.create_task(self.refresh_data())
 
     def run_load_more_matches_button(self):
-        self.load_more_matches_button.setEnabled(False)
-        asyncio.create_task(self.run_load_more_matches())
-        self.load_more_matches_button.setEnabled(True)
+        if self.load_more_matches_button.isEnabled():
+            self.load_more_matches_button.setEnabled(False)
+            asyncio.create_task(self.run_load_more_matches())
 
     async def run_load_more_matches(self):
         self.refresh_button.setEnabled(False)
-        await valo_rank.load_more_matches(on_update=self.safe_load_players)
-        self.refresh_button.setEnabled(True)
+        try:
+            await valo_rank.load_more_matches(on_update=self.safe_load_players)
+            self.safe_load_players(valo_rank.frontend_data)
+        finally:
+            self.refresh_button.setEnabled(True)
+            self.load_more_matches_button.setEnabled(True)
 
 
     async def refresh_data(self):
+        if not self.refresh_button.isEnabled():
+            return
+
         self.refresh_button.setEnabled(False)  # disable the button
-        """Actually run valo_stats() and update the table"""
-        print("Fetching latest Valorant stats...")
-        await valo_rank.valo_stats(on_update=self.safe_load_players)  # await your async API call
-        print("✅ Data fetched. Refreshing table...")
-        self.safe_load_players(valo_rank.frontend_data)
         try:
-            self.gamemode_value.setText(valo_rank.gs[0])
-            self.server_value.setText(valo_rank.gs[1])
-        except IndexError:
-            pass
-        self.refresh_button.setEnabled(True)
+            print("Fetching latest Valorant stats...")
+            await valo_rank.valo_stats(on_update=self.safe_load_players)  # await your async API call
+            print("✅ Data fetched. Refreshing table...")
+            self.safe_load_players(valo_rank.frontend_data)
+            self.update_metadata()
+        finally:
+            self.refresh_button.setEnabled(True)
 
     # ---------------------------------------------------------
     # Main data-loading logic (two-column layout)
     # ---------------------------------------------------------
     def load_players(self, players):
-        """Display up to 12 player entries, split into two tables if >5."""
-        if not players:
-            return
+        """Display player entries split into left (Red) and right (Blue) teams."""
 
         self.left_players = []
         self.right_players = []
-        print(players)
-        for x in players:
-            if players[x].get("team") == "Red":
-                self.left_players.append(players[x])
-            elif players[x].get("team") == "Blue":
-                self.right_players.append(players[x])
 
-        self.fill_table(self.table_left, self.left_players)
-        self.fill_table(self.table_right, self.right_players)
+        if not players:
+            self.populate_card_layout(self.card_left_layout, [], "Waiting for Red team...")
+            self.populate_card_layout(self.card_right_layout, [], "Waiting for Blue team...")
+            self.populate_compact_layout(self.compact_left_layout, [], "Waiting for Red team...")
+            self.populate_compact_layout(self.compact_right_layout, [], "Waiting for Blue team...")
+            self.update_metadata()
+            return
 
-    def fill_table(self, table, players):
-        """Helper to fill a single table with player data."""
-        table.setRowCount(len(players))
+        player_iterable = players.values() if isinstance(players, dict) else players
+        for player in player_iterable:
+            team = player.get("team")
+            if team == "Red":
+                self.left_players.append(player)
+            elif team == "Blue":
+                self.right_players.append(player)
 
-        RANK_COLOURS = {
-            "Unranked": "#6e7176",
-            "Iron": "#4f514f",
-            "Bronze": "#a5855d",
-            "Silver": "#bbc2c2",
-            "Gold": "#eccf56",
-            "Platinum": "#59a9b6",
-            "Diamond": "#b489c4",
-            "Ascendant": "#6ae2af",
-            "Immortal": "#bb3d65",
-            "Radiant": "#ffffaa",
-        }
+        self.populate_card_layout(self.card_left_layout, self.left_players, "Waiting for Red team...")
+        self.populate_card_layout(self.card_right_layout, self.right_players, "Waiting for Blue team...")
+        self.populate_compact_layout(self.compact_left_layout, self.left_players, "Waiting for Red team...")
+        self.populate_compact_layout(self.compact_right_layout, self.right_players, "Waiting for Blue team...")
+        self.update_metadata()
 
-        for row, player in enumerate(players):
-            name = QTableWidgetItem(str(player.get("name", "Unknown")))
-            level = QTableWidgetItem(str(player.get("level", "N/A")))
-            matches = QTableWidgetItem(str(player.get("matches", 0)))
-            wl_value = player.get("wl", "N/A")
-            wl = QTableWidgetItem(str(wl_value))
-            acs_value = player.get("acs", "N/A")
-            acs = QTableWidgetItem(str(acs_value))
-            kd_value = player.get("kd", "N/A")
-            kd = QTableWidgetItem(str(kd_value))
-            hs_value = player.get("hs", "N/A")
-            if str(hs_value) == "N/A":
-                hs = QTableWidgetItem(f"{str(hs_value)}")
-            else:
-                hs = QTableWidgetItem(f"{str(hs_value)}%")
-#            rank_value = str(player.get("rank", "Unranked"))
-#            rank = QTableWidgetItem(rank_value)
-            rr = QTableWidgetItem(str(player.get("rr", "N/A")))
-#            peak_value = str(player.get("peak_rank", "Unranked"))
-#            peak = QTableWidgetItem(peak_value)
-            peak_act = QTableWidgetItem(str(player.get("peak_act", "N/A")))
+    def populate_card_layout(self, layout, players, empty_message):
+        self.clear_layout(layout)
+        if not players:
+            placeholder = QLabel(empty_message)
+            placeholder.setObjectName("emptyState")
+            placeholder.setAlignment(Qt.AlignCenter)
+            layout.addWidget(placeholder)
+            return
 
-            agent_name = str(player.get("agent", "Unknown"))
-            agent_icon = self.agent_icons.get(agent_name)
-            agent_label = QLabel()
-            if agent_icon:
-                agent_label.setPixmap(agent_icon.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                agent_label.setAlignment(Qt.AlignCenter)
-            elif agent_name == "[]":
-                agent_label.setText("N/A")
-                agent_label.setAlignment(Qt.AlignCenter)
-            else:
-                agent_label.setText(agent_name)
-                agent_label.setAlignment(Qt.AlignCenter)
+        for player in players:
+            layout.addWidget(self.create_player_card(player))
 
-            rank_name = str(player.get("rank", "Unknown"))
-            rank_icon = self.rank_icons.get(rank_name)
-            rank_label = QLabel()
-            if rank_icon:
-                rank_label.setPixmap(rank_icon.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                rank_label.setAlignment(Qt.AlignCenter)
-            elif rank_name == "N/A":
-                rank_label.setText("N/A")
-                rank_label.setAlignment(Qt.AlignCenter)
-            else:
-                rank_label.setText(rank_name)
-                rank_label.setAlignment(Qt.AlignCenter)
+    def populate_compact_layout(self, layout, players, empty_message):
+        self.clear_layout(layout)
+        if not players:
+            placeholder = QLabel(empty_message)
+            placeholder.setObjectName("emptyState")
+            placeholder.setAlignment(Qt.AlignCenter)
+            layout.addWidget(placeholder)
+            return
 
-            peak_name = str(player.get("peak_rank", "Unknown"))
-            peak_icon = self.rank_icons.get(peak_name)
-            peak_label = QLabel()
-            if peak_icon:
-                peak_label.setPixmap(peak_icon.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                peak_label.setAlignment(Qt.AlignCenter)
-            elif peak_name == "[]":
-                peak_label.setText("N/A")
-                peak_label.setAlignment(Qt.AlignCenter)
-            else:
-                peak_label.setText(peak_name)
-                peak_label.setAlignment(Qt.AlignCenter)
+        for player in players:
+            layout.addWidget(self.create_compact_player_row(player))
 
-            # --- WL color coding ---
-            try:
-                wl_float = float(wl_value[:-1])
-                if wl_float < 47:
-                    wl.setForeground(QBrush(QColor("red")))
-                elif wl_float < 53:
-                    wl.setForeground(QBrush(QColor("gold")))
-                elif wl_float < 60:
-                    wl.setForeground(QBrush(QColor("limegreen")))
-                else:
-                    wl.setForeground(QBrush(QColor("cyan")))
-            except ValueError:
-                pass  # e.g. "N/A"
+    def update_metadata(self):
+        gamemode = "Unknown"
+        server = "Unknown"
 
-            # --- ACS color coding ---
-            try:
-                acs_float = float(acs_value)
-                if acs_float < 200:
-                    acs.setForeground(QBrush(QColor("red")))
-                elif acs_float < 225:
-                    acs.setForeground(QBrush(QColor("gold")))
-                elif acs_float < 250:
-                    acs.setForeground(QBrush(QColor("limegreen")))
-                else:
-                    acs.setForeground(QBrush(QColor("cyan")))
-            except ValueError:
-                pass  # e.g. "N/A"
+        gs = getattr(valo_rank, "gs", None)
+        if isinstance(gs, (list, tuple)):
+            if len(gs) > 0 and gs[0]:
+                gamemode = str(gs[0])
+            if len(gs) > 1 and gs[1]:
+                server = str(gs[1])
 
-            # --- KD color coding ---
-            try:
-                kd_float = float(kd_value)
-                if kd_float < 0.9:
-                    kd.setForeground(QBrush(QColor("red")))
-                elif kd_float < 1.1:
-                    kd.setForeground(QBrush(QColor("gold")))
-                elif kd_float < 1.25:
-                    kd.setForeground(QBrush(QColor("limegreen")))
-                else:
-                    kd.setForeground(QBrush(QColor("cyan")))
-            except ValueError:
-                pass  # e.g. "N/A"
-
-            # --- HS color coding ---
-            try:
-                hs_float = float(hs_value)
-                if hs_float < 20:
-                    hs.setForeground(QBrush(QColor("red")))
-                elif hs_float < 30:
-                    hs.setForeground(QBrush(QColor("gold")))
-                elif hs_float < 40:
-                    hs.setForeground(QBrush(QColor("limegreen")))
-                else:
-                    hs.setForeground(QBrush(QColor("cyan")))
-            except ValueError:
-                pass # e.g. "N/A"
-
-
-            # --- Rank colour coding ---
-#            for key, color in RANK_COLOURS.items():
-#                 if key.lower() in rank_value.lower():
-#                    rank.setForeground(QBrush(QColor(color)))
-#                    break
-
-            # --- Peak rank colour coding ---
-#            for key, color in RANK_COLOURS.items():
-#                if key.lower() in peak_value.lower():
-#                    peak.setForeground(QBrush(QColor(color)))
-#                    break
-
-            for col, item in enumerate([name, None, level, matches, wl, acs, kd, hs, None, rr, None, peak_act]):
-                if item:
-                    item.setTextAlignment(Qt.AlignCenter)
-                    table.setItem(row, col, item)
-
-            table.setCellWidget(row, 1, agent_label)
-            table.setCellWidget(row, 8, rank_label)
-            table.setCellWidget(row, 10, peak_label)
-
-        table.resizeColumnsToContents()
+        self.gamemode_value.setText(gamemode)
+        self.server_value.setText(server)
 
 
 # ---------------------------------------------------------
