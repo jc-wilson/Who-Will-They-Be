@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QComboBox, QSpacerItem, QSizePolicy
 )
 from PySide6.QtCore import (Qt, QTimer, Slot, QUrl, QSize)
-from PySide6.QtGui import (QPixmap, QIcon, QColor, QBrush, QDesktopServices)
+from PySide6.QtGui import (QPixmap, QIcon, QColor, QBrush, QDesktopServices, QFontDatabase, QFont)
 import sys
 import os
 import aiohttp
@@ -34,6 +34,19 @@ uuid_handler.agent_uuid_function()
 class ValorantStatsWindow(QMainWindow):
     def __init__(self, players=None):
         super().__init__()
+
+        font_path = resource_path("assets/fonts/proximanova_regular.ttf")
+        print("🔍 Loading font from:", font_path)
+
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        font_families = QFontDatabase.applicationFontFamilies(font_id)
+
+        if font_families:
+            app_font = QFont(font_families[0], 11)  # Optional size
+            QApplication.setFont(app_font)
+            print(f"✅ Loaded font: {font_families[0]}")
+        else:
+            print("⚠️ Failed to load custom font, falling back to default.")
 
         self.setWindowTitle("Who Will They Be")
         self.setMinimumSize(1500, 350)
@@ -107,6 +120,10 @@ class ValorantStatsWindow(QMainWindow):
         # Preload agent icons
         from core.asset_loader import download_and_cache_agent_icons
         self.agent_icons = download_and_cache_agent_icons()
+
+        # Preload rank icons
+        from core.asset_loader import download_and_cache_rank_icons
+        self.rank_icons = download_and_cache_rank_icons()
 
         # Split players by team
         # Populate tables if data provided
@@ -189,8 +206,8 @@ class ValorantStatsWindow(QMainWindow):
         return table
 
     def on_cell_clicked(self, row, column):
-        if column == 0:  # only make column 1 clickable
-            sender_table = self.sender()  # figure out which table sent the signal
+        if column == 0:
+            sender_table = self.sender()
             item = sender_table.item(row, column)
             if item:
                 text = item.text()
@@ -244,27 +261,6 @@ class ValorantStatsWindow(QMainWindow):
             pass
         self.refresh_button.setEnabled(True)
 
-    def fetch_agent_icons(self):
-        """Fetch agent display icons and return a dict: {'Jett': QPixmap(...), ...}"""
-        icons = {}
-        try:
-            response = requests.get("https://valorant-api.com/v1/agents")
-            agents = response.json()["data"]
-            for agent in agents:
-                if not agent.get("isPlayableCharacter", False):
-                    continue
-                name = agent["displayName"]
-                icon_url = agent.get("displayIconSmall") or agent.get("displayIcon")
-                if not icon_url:
-                    continue
-                img_data = requests.get(icon_url).content
-                pixmap = QPixmap(resource_path(f"assets/agents/{agent_name}.png"))
-                pixmap.loadFromData(img_data)
-                icons[name] = pixmap
-        except Exception as e:
-            print(f"⚠️ Failed to fetch agent icons: {e}")
-        return icons
-
     # ---------------------------------------------------------
     # Main data-loading logic (two-column layout)
     # ---------------------------------------------------------
@@ -291,15 +287,15 @@ class ValorantStatsWindow(QMainWindow):
 
         RANK_COLOURS = {
             "Unranked": "#6e7176",
-            "Iron": "#4d4945",
-            "Bronze": "#876a44",
-            "Silver": "#b8b0a8",
-            "Gold": "#dcb029",
-            "Platinum": "#316f7b",
-            "Diamond": "#8c3d84",
-            "Ascendant": "#218c5a",
-            "Immortal": "#ec3963",
-            "Radiant": "#ffffb1",
+            "Iron": "#4f514f",
+            "Bronze": "#a5855d",
+            "Silver": "#bbc2c2",
+            "Gold": "#eccf56",
+            "Platinum": "#59a9b6",
+            "Diamond": "#b489c4",
+            "Ascendant": "#6ae2af",
+            "Immortal": "#bb3d65",
+            "Radiant": "#ffffaa",
         }
 
         for row, player in enumerate(players):
@@ -317,11 +313,11 @@ class ValorantStatsWindow(QMainWindow):
                 hs = QTableWidgetItem(f"{str(hs_value)}")
             else:
                 hs = QTableWidgetItem(f"{str(hs_value)}%")
-            rank_value = str(player.get("rank", "Unranked"))
-            rank = QTableWidgetItem(rank_value)
+#            rank_value = str(player.get("rank", "Unranked"))
+#            rank = QTableWidgetItem(rank_value)
             rr = QTableWidgetItem(str(player.get("rr", "N/A")))
-            peak_value = str(player.get("peak_rank", "Unranked"))
-            peak = QTableWidgetItem(peak_value)
+#            peak_value = str(player.get("peak_rank", "Unranked"))
+#            peak = QTableWidgetItem(peak_value)
             peak_act = QTableWidgetItem(str(player.get("peak_act", "N/A")))
 
             agent_name = str(player.get("agent", "Unknown"))
@@ -336,6 +332,32 @@ class ValorantStatsWindow(QMainWindow):
             else:
                 agent_label.setText(agent_name)
                 agent_label.setAlignment(Qt.AlignCenter)
+
+            rank_name = str(player.get("rank", "Unknown"))
+            rank_icon = self.rank_icons.get(rank_name)
+            rank_label = QLabel()
+            if rank_icon:
+                rank_label.setPixmap(rank_icon.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                rank_label.setAlignment(Qt.AlignCenter)
+            elif rank_name == "N/A":
+                rank_label.setText("N/A")
+                rank_label.setAlignment(Qt.AlignCenter)
+            else:
+                rank_label.setText(rank_name)
+                rank_label.setAlignment(Qt.AlignCenter)
+
+            peak_name = str(player.get("peak_rank", "Unknown"))
+            peak_icon = self.rank_icons.get(peak_name)
+            peak_label = QLabel()
+            if peak_icon:
+                peak_label.setPixmap(peak_icon.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                peak_label.setAlignment(Qt.AlignCenter)
+            elif peak_name == "[]":
+                peak_label.setText("N/A")
+                peak_label.setAlignment(Qt.AlignCenter)
+            else:
+                peak_label.setText(peak_name)
+                peak_label.setAlignment(Qt.AlignCenter)
 
             # --- WL color coding ---
             try:
@@ -395,23 +417,25 @@ class ValorantStatsWindow(QMainWindow):
 
 
             # --- Rank colour coding ---
-            for key, color in RANK_COLOURS.items():
-                if key.lower() in rank_value.lower():
-                    rank.setForeground(QBrush(QColor(color)))
-                    break
+#            for key, color in RANK_COLOURS.items():
+#                 if key.lower() in rank_value.lower():
+#                    rank.setForeground(QBrush(QColor(color)))
+#                    break
 
             # --- Peak rank colour coding ---
-            for key, color in RANK_COLOURS.items():
-                if key.lower() in peak_value.lower():
-                    peak.setForeground(QBrush(QColor(color)))
-                    break
+#            for key, color in RANK_COLOURS.items():
+#                if key.lower() in peak_value.lower():
+#                    peak.setForeground(QBrush(QColor(color)))
+#                    break
 
-            for col, item in enumerate([name, None, level, matches, wl, acs, kd, hs, rank, rr, peak, peak_act]):
+            for col, item in enumerate([name, None, level, matches, wl, acs, kd, hs, None, rr, None, peak_act]):
                 if item:
                     item.setTextAlignment(Qt.AlignCenter)
                     table.setItem(row, col, item)
 
             table.setCellWidget(row, 1, agent_label)
+            table.setCellWidget(row, 8, rank_label)
+            table.setCellWidget(row, 10, peak_label)
 
         table.resizeColumnsToContents()
 
@@ -420,7 +444,6 @@ class ValorantStatsWindow(QMainWindow):
 # Async entry point for qasync
 # ---------------------------------------------------------
 async def main():
-    # Create window immediately — no waiting
     window = ValorantStatsWindow([])
     window.show()
 

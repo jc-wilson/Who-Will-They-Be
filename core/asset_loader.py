@@ -40,3 +40,42 @@ def download_and_cache_agent_icons(cache_dir="assets/agents"):
 
     print(f"✅ Loaded {len(icons)} agent icons (cached in {cache_dir})")
     return icons
+
+def download_and_cache_rank_icons(cache_dir="assets/ranks"):
+    os.makedirs(cache_dir, exist_ok=True)
+
+    print("🖼️ Fetching rank icons from Valorant API...")
+    response = requests.get("https://valorant-api.com/v1/competitivetiers")
+    response.raise_for_status()
+    ranks = response.json()["data"][4]["tiers"]
+
+    icons = {}
+    print(ranks)
+
+    for rank in ranks:
+        name = rank["tierName"].capitalize()
+        icon_url = rank.get("smallIcon") or rank.get("largeIcon")
+        if not icon_url:
+            print("failed to retrieve icon url")
+            continue
+
+        # 🔧 sanitise filename (replace /, \, :, ?, etc.)
+        print("sanitising filenames")
+        safe_name = re.sub(r'[\\/*?:"<>|]', "_", name)
+        file_path = os.path.join(cache_dir, f"{safe_name}.png")
+
+        # Download only if not already cached
+        if not os.path.exists(file_path):
+            print(f"⬇️ Downloading {name} icon...")
+            img_data = requests.get(icon_url).content
+            with open(file_path, "wb") as f:
+                f.write(img_data)
+
+        # Load QPixmap from local file
+        pixmap = QPixmap(file_path)
+        icons[name] = pixmap
+
+    print(f"✅ Loaded {len(icons)} rank icons (cached in {cache_dir})")
+    return icons
+
+
