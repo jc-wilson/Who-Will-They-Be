@@ -1,6 +1,7 @@
 from core.detection import MatchDetectionHandler
 from core.local_api import LockfileHandler
 from core.valorant_uuid import UUIDHandler
+from core.skins import SkinHandler
 import requests
 import valo_api
 import sys
@@ -27,11 +28,13 @@ class ValoRank:
         self.zero_check = {}    # Total amount of competitive matches a player has that can be loaded
         self.mmr = {}
         self.match_stats = {}
-        self.pip = []   # Duplicate of player_info_pre so that it doesn't get lost when you load into a match
+        self.pip = {}   # Duplicate of player_info_pre so that it doesn't get lost when you load into a match
         self.handler = None
         self.start = 10
         self.end = 20
         self.gs = []    # Gamemode and Server
+        self.skins = {}
+        self.done = 0
         self.gamemode_list = {
             "Swiftplay": "Swiftplay",
             "Deathmatch": "Deathmatch",
@@ -155,12 +158,12 @@ class ValoRank:
 
             self.gs[1] = self.gs[1][29:-2].capitalize()
 
-
     async def valo_stats(self, on_update=None):
         self.handler = MatchDetectionHandler()
         await asyncio.to_thread(self.handler.player_info_retrieval)
 
         self.uuid_handler = UUIDHandler()
+        self.skin_handler = SkinHandler()
         self.uuid_handler.agent_uuid_function()
         try:
             current_match_id = self.handler.in_match
@@ -177,11 +180,12 @@ class ValoRank:
             self.zero_check = {}
             self.mmr = {}
             self.match_stats = {}
-            self.pip = []
+            self.pip = {}
             self.start = 10
             self.end = 20
             self.gs = []
             self.gs_func()
+            self.done = 0
 
         if self.handler.player_info_pre:
             self.pip = self.handler.player_info_pre
@@ -194,8 +198,11 @@ class ValoRank:
                     self.cmp.append(player.get("Subject"))
             elif len(self.cmp) < 10:
                 for player in self.handler.player_info["Players"]:
-                    if player["TeamID"] != self.pip["AllyTeam"]["TeamID"]:
-                        self.cmp.append(player.get("Subject"))
+                    try:
+                        if player["TeamID"] != self.pip["AllyTeam"]["TeamID"]:
+                            self.cmp.append(player.get("Subject"))
+                    except:
+                        pass
             else:
                 pass
         elif self.pip:
@@ -207,22 +214,14 @@ class ValoRank:
 
 
         if self.cmp:
-            if not self.pip and len(self.ca) != 10:
+            if len(self.ca) < 10:
                 self.ca = {}
-                for i, player in enumerate(self.handler.player_info["Players"]):
-                    self.ca[self.cmp[i]] = player.get("CharacterID")
-            elif self.pip and not self.handler.player_info:
-                self.ca = {}
-                for i, player in enumerate(self.pip["AllyTeam"]["Players"]):
-                    self.ca[self.cmp[i]] = player.get("CharacterID")
-            elif self.pip and self.handler.player_info and len(self.ca) == 5:
-                self.ca = {}
-                for i, player in enumerate(self.handler.player_info["Players"]):
-                    if player["TeamID"] == self.pip["AllyTeam"]["TeamID"]:
-                        self.ca[self.cmp[i]] = player.get("CharacterID")
-                for i, player in enumerate(self.handler.player_info["Players"]):
-                    if player["TeamID"] != self.pip["AllyTeam"]["TeamID"]:
-                        self.ca[self.cmp[i]] = player.get("CharacterID")
+                if self.handler.player_info:
+                    for player in self.handler.player_info["Players"]:
+                        self.ca[player.get("Subject")] = player.get("CharacterID")
+                else:
+                    for player in self.pip["AllyTeam"]["Players"]:
+                        self.ca[player.get("Subject")] = player.get("CharacterID")
 
         def to_dict(obj):
             if isinstance(obj, list):
@@ -328,6 +327,7 @@ class ValoRank:
                         }
                         await self.updater_func(on_update)
                         self.used_puuids.append(puuid)
+                        await self.assign_skins()
                         continue
 
                     match_id_name = self.riot_name["History"][0]["MatchID"]
@@ -370,6 +370,7 @@ class ValoRank:
                     }
                     await self.updater_func(on_update)
                     self.used_puuids.append(puuid)
+                    await self.assign_skins()
                     continue
 
                 #if self.valorant_mmr:
@@ -395,17 +396,18 @@ class ValoRank:
                         self.match_stats[puuid] = await asyncio.gather(*tasks)
 
                 await gather_matches()
-
+                self.used_puuids.append(puuid)
                 await self.calc_stats(puuid)
-
                 await self.updater_func(on_update)
 
-                self.used_puuids.append(puuid)
+        await self.updater_func(on_update)
+        print(self.frontend_data)
+        print("refreshed")
 
         for index, puuid in enumerate(self.cmp):
             self.frontend_data[puuid]["agent"] = self.uuid_handler.agent_converter(self.ca[puuid])
             await self.updater_func(on_update)
-
+            print(self.frontend_data)
 
     async def calc_stats(self, puuid, on_update=None):
         stats_list = []
@@ -497,6 +499,7 @@ class ValoRank:
             "peak_act": self.mmr[puuid]["highest_rank"]["season"].upper(),
             "team": bor
         }
+        await self.assign_skins()
         await self.updater_func(on_update)
 
         print(
@@ -539,6 +542,13 @@ class ValoRank:
         self.start += 10
         self.end += 10
 
+    async def assign_skins(self, on_update=None):
+        print("assigning skins")
+        if len(self.used_puuids) == len(self.cmp):
+            for puuid in self.used_puuids:
+                self.frontend_data[puuid]["skins"] = self.skin_handler.assign_skins(puuid, self.handler.in_match, self.handler.match_id_header)
+                await self.updater_func(on_update)
+
     async def fetch(self, session, url, retries=3):
         for attempt in range(retries):
             async with session.get(url) as response:
@@ -559,7 +569,6 @@ class ValoRank:
 
         print(f"❌ Failed to fetch {url} after {retries} retries.")
         return None
-
 
 
 

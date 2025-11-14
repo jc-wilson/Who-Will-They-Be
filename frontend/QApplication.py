@@ -5,10 +5,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow,
     QVBoxLayout, QGridLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
     QComboBox, QFrame, QSplitter, QScrollArea, QStackedWidget, QToolButton,
-    QButtonGroup
+    QButtonGroup, QDialog, QGraphicsDropShadowEffect, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, QSize
-from PySide6.QtGui import QPixmap, QIcon, QFontDatabase, QFont
+from PySide6.QtGui import QPixmap, QIcon, QFontDatabase, QFont, QColor
 import sys
 import os
 import asyncio
@@ -28,14 +28,224 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-valo_rank = ValoRank()
-dodge_game = dodge()
-uuid_handler = UUIDHandler()
-uuid_handler.agent_uuid_function()
+class WeaponPopup(QDialog):
+    WEAPON_ORDER = [
+        "Classic", "Shorty", "Frenzy", "Ghost", "Sheriff",
+        "Stinger", "Spectre",
+        "Bucky", "Judge",
+        "Bulldog", "Guardian", "Phantom", "Vandal",
+        "Marshal", "Outlaw", "Operator",
+        "Ares", "Odin",
+        "Knife",
+    ]
+
+    def __init__(self, player_name, skins, skin_icons, parent=None):
+        super().__init__(parent)
+
+        self.skins = skins or {}
+        self.skin_icons = skin_icons or {}
+        player_display = player_name or "Unknown"
+
+        self.setWindowFlags(
+            Qt.Dialog |
+            Qt.FramelessWindowHint |
+            Qt.Popup
+        )
+
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        container = QWidget()
+        container.setObjectName("popupCard")
+
+        main_layout = QVBoxLayout(container)
+        main_layout.setContentsMargins(30, 30, 30, 30)
+        main_layout.setSpacing(16)
+
+        header = QVBoxLayout()
+        header.setSpacing(6)
+        header.setAlignment(Qt.AlignCenter)
+
+        title = QLabel(f"{player_display}'s Loadout")
+        title.setTextFormat(Qt.PlainText)
+        title.setObjectName("title")
+        header.addWidget(title, alignment=Qt.AlignCenter)
+
+        subtitle = QLabel("Selected weapon skins")
+        subtitle.setObjectName("subtitle")
+        header.addWidget(subtitle, alignment=Qt.AlignCenter)
+
+        main_layout.addLayout(header)
+
+        self.tile_width = 170
+        self.tile_height = 120
+
+        grid = QGridLayout()
+        grid.setSpacing(16)
+        grid.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        columns = 4
+
+        for index, weapon in enumerate(self.WEAPON_ORDER):
+            row = index // columns
+            column = index % columns
+            grid.addWidget(self.build_skin_tile(weapon, self.skins.get(weapon)), row, column)
+
+        exit_tile_index = len(self.WEAPON_ORDER)
+        exit_row = exit_tile_index // columns
+        exit_col = exit_tile_index % columns
+        grid.addWidget(self.build_exit_tile(), exit_row, exit_col)
+
+        main_layout.addLayout(grid)
+
+        outer = QVBoxLayout(self)
+        outer.addWidget(container)
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(50)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(0, 0, 0, 180))
+        container.setGraphicsEffect(shadow)
+
+        self.setStyleSheet("""
+            #popupCard {
+                background-color: #1a1f2e;
+                border-radius: 22px;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+            }
+
+            #title {
+                color: #e3e8ff;
+                font-size: 22px;
+                font-weight: 600;
+            }
+
+            #subtitle {
+                color: #a0abcc;
+                font-size: 14px;
+            }
+
+            #weaponLabel {
+                color: #8c95b4;
+                font-size: 12px;
+                letter-spacing: 1px;
+                text-transform: uppercase;
+            }
+
+            #skinTile {
+                background-color: #13192a;
+                border-radius: 18px;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                min-width: 150px;
+                min-height: 110px;
+            }
+
+            #skinTile:hover {
+                border: 1px solid rgba(77, 108, 255, 0.6);
+                background-color: #192139;
+            }
+
+            #skinPreview {
+                background-color: rgba(7, 10, 19, 0.6);
+                border-radius: 12px;
+                border: 1px dashed rgba(255, 255, 255, 0.08);
+            }
+
+            #skinPreview[empty="true"] {
+                color: #8c95b4;
+                font-size: 11px;
+                letter-spacing: 1px;
+            }
+
+            #exitTile {
+                background-color: #1f2436;
+                border-radius: 18px;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+            }
+
+            #exitTile QPushButton {
+                background-color: rgba(255, 255, 255, 0.06);
+                border: none;
+                color: #f4f6ff;
+                font-size: 28px;
+                font-weight: 700;
+                border-radius: 16px;
+            }
+
+            #exitTile QPushButton:hover {
+                background-color: rgba(255, 87, 107, 0.35);
+            }
+        """)
+
+        self.resize(960, 540)
+
+    def build_skin_tile(self, weapon, skin_id):
+        tile = QFrame()
+        tile.setObjectName("skinTile")
+        tile.setFixedSize(self.tile_width, self.tile_height)
+
+        tile_layout = QVBoxLayout(tile)
+        tile_layout.setContentsMargins(12, 12, 12, 12)
+        tile_layout.setSpacing(8)
+        tile_layout.setAlignment(Qt.AlignCenter)
+
+        weapon_label = QLabel(weapon)
+        weapon_label.setObjectName("weaponLabel")
+        weapon_label.setAlignment(Qt.AlignCenter)
+        tile_layout.addWidget(weapon_label)
+
+        preview = QLabel()
+        preview.setObjectName("skinPreview")
+        preview.setAlignment(Qt.AlignCenter)
+        preview.setMinimumSize(120, 70)
+        preview.setProperty("empty", "false")
+
+        pixmap = None
+        if skin_id:
+            pixmap = self.skin_icons.get(str(skin_id))
+
+        if pixmap:
+            preview.setPixmap(
+                pixmap.scaled(120, 70, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        else:
+            preview.setText("No Preview")
+            preview.setProperty("empty", "true")
+
+        preview.style().unpolish(preview)
+        preview.style().polish(preview)
+
+        tile_layout.addWidget(preview)
+        return tile
+
+    def build_exit_tile(self):
+        tile = QFrame()
+        tile.setObjectName("exitTile")
+        tile.setFixedSize(self.tile_width, self.tile_height)
+
+        layout = QVBoxLayout(tile)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        layout.setAlignment(Qt.AlignCenter)
+
+        label = QLabel("Close")
+        label.setObjectName("weaponLabel")
+        label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(label)
+
+        exit_button = QPushButton("×")
+        exit_button.setFixedSize(96, 48)
+        exit_button.clicked.connect(self.close)
+        layout.addWidget(exit_button, alignment=Qt.AlignCenter)
+
+        return tile
 
 class ValorantStatsWindow(QMainWindow):
     def __init__(self, players=None):
         super().__init__()
+
+        self.valo_rank = ValoRank()
+        self.dodge_game = dodge()
+        self.uuid_handler = UUIDHandler()
+        self.uuid_handler.agent_uuid_function()
 
         font_path = resource_path("assets/fonts/proximanova_regular.ttf")
         print("🔍 Loading font from:", font_path)
@@ -67,7 +277,7 @@ class ValorantStatsWindow(QMainWindow):
         ])
         self.combo.setCurrentIndex(4)
         self.combo.setMinimumWidth(200)
-        self.agent = uuid_handler.agent_converter_reversed(self.combo.currentText())
+        self.agent = self.uuid_handler.agent_converter_reversed(self.combo.currentText())
 
         # Primary actions
         self.lock_agent_button = QPushButton("Lock Agent")
@@ -103,6 +313,9 @@ class ValorantStatsWindow(QMainWindow):
 
         from core.asset_loader import download_and_cache_rank_icons
         self.rank_icons = download_and_cache_rank_icons()
+
+        from core.asset_loader import download_and_cache_skins
+        self.skin_icons = download_and_cache_skins()
 
         # ─────────────── Layout ───────────────
         header_frame = QFrame()
@@ -192,6 +405,10 @@ class ValorantStatsWindow(QMainWindow):
     # ---------------------------------------------------------
     # Utility setup methods
     # ---------------------------------------------------------
+    def open_skin_popup(self, player_name, skins):
+        popup = WeaponPopup(player_name, skins, getattr(self, "skin_icons", {}), self)
+        popup.exec()
+
     def build_meta_chip(self, label_text):
         chip = QFrame()
         chip.setObjectName("metaChip")
@@ -341,6 +558,31 @@ class ValorantStatsWindow(QMainWindow):
         layout.addWidget(title_label)
         layout.addWidget(value_label)
         return wrapper, value_label
+
+    def create_skin_button(self, player, compact=False):
+        skins = player.get("skins") or {}
+        button = QPushButton()
+        button.setCursor(Qt.PointingHandCursor)
+        button.setObjectName("compactSkinButton" if compact else "skinButton")
+
+        if compact:
+            button.setFixedHeight(32)
+            button.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+
+        if skins:
+            if compact:
+                button.setText("SKINS")
+            else:
+                button.setText("SKINS")
+            player_name = str(player.get("name", "Unknown"))
+            button.clicked.connect(
+                lambda _, name=player_name, data=skins: self.open_skin_popup(name, data)
+            )
+        else:
+            button.setText("Loadout unavailable")
+            button.setEnabled(False)
+
+        return button
 
     def create_player_card(self, player):
         card = QFrame()
@@ -502,6 +744,10 @@ class ValorantStatsWindow(QMainWindow):
         stats_grid.addWidget(peak_act_widget, 1, 2)
 
         info_column.addLayout(stats_grid)
+
+        print(player.get("skins"))
+        skin_button = self.create_skin_button(player)
+        info_column.addWidget(skin_button, alignment=Qt.AlignLeft)
         card_layout.addLayout(info_column, 1)
 
         return card
@@ -614,6 +860,9 @@ class ValorantStatsWindow(QMainWindow):
         peak_act_label.setObjectName("metaAux")
         meta_bar.addWidget(peak_act_label)
 
+        skin_button = self.create_skin_button(player, compact=True)
+        meta_bar.addWidget(skin_button)
+
         meta_bar.addStretch(1)
         info_column.addLayout(meta_bar)
 
@@ -720,6 +969,9 @@ class ValorantStatsWindow(QMainWindow):
             " font-size: 24px;"
             " font-weight: 800;"
             " letter-spacing: 1.4px;"
+            "}"
+            "QLabel#headerLogo {"
+            " min-height: 96px;"
             "}"
             "QLabel#sectionLabel {"
             " color: #9aa4c4;"
@@ -929,6 +1181,33 @@ class ValorantStatsWindow(QMainWindow):
             "QPushButton#refreshButton:hover {"
             " background-color: rgba(44, 63, 95, 0.95);"
             "}"
+            "QPushButton#skinButton {"
+            " background-color: rgba(18, 27, 42, 0.9);"
+            " border-radius: 12px;"
+            " text-align: left;"
+            " padding: 8px 14px;"
+            " border: 1px solid rgba(86, 104, 138, 0.45);"
+            " font-size: 12px;"
+            " letter-spacing: 0.4px;"
+            " color: #dfe6ff;"
+            "}"
+            "QPushButton#skinButton:hover {"
+            " background-color: rgba(30, 43, 65, 0.95);"
+            " border: 1px solid rgba(128, 151, 196, 0.7);"
+            "}"
+            "QPushButton#compactSkinButton {"
+            " background-color: rgba(18, 27, 42, 0.9);"
+            " border-radius: 12px;"
+            " padding: 4px 10px;"
+            " border: 1px solid rgba(86, 104, 138, 0.45);"
+            " font-size: 11px;"
+            " letter-spacing: 0.4px;"
+            " color: #dfe6ff;"
+            "}"
+            "QPushButton#compactSkinButton:hover {"
+            " background-color: rgba(30, 43, 65, 0.95);"
+            " border: 1px solid rgba(128, 151, 196, 0.7);"
+            "}"
             "QComboBox {"
             " background-color: rgba(23, 34, 52, 0.85);"
             " border-radius: 12px;"
@@ -977,7 +1256,7 @@ class ValorantStatsWindow(QMainWindow):
         self.setStyleSheet(base_style)
 
     def on_selection_changed(self, text):
-        self.agent = uuid_handler.agent_converter_reversed(text)
+        self.agent = self.uuid_handler.agent_converter_reversed(text)
 
     def instalock_agent(self):
         self.lock_agent_button.setEnabled(False)
@@ -996,7 +1275,7 @@ class ValorantStatsWindow(QMainWindow):
 
     async def _dodge_async(self):
         try:
-            await dodge_game.dodge_func()
+            await self.dodge_game.dodge_func()
         finally:
             self.dodge_button.setEnabled(True)
 
@@ -1012,12 +1291,11 @@ class ValorantStatsWindow(QMainWindow):
     async def run_load_more_matches(self):
         self.refresh_button.setEnabled(False)
         try:
-            await valo_rank.load_more_matches(on_update=self.safe_load_players)
-            self.safe_load_players(valo_rank.frontend_data)
+            await self.valo_rank.load_more_matches(on_update=self.safe_load_players)
+            self.safe_load_players(self.valo_rank.frontend_data)
         finally:
             self.refresh_button.setEnabled(True)
             self.load_more_matches_button.setEnabled(True)
-
 
     async def refresh_data(self):
         if not self.refresh_button.isEnabled():
@@ -1026,9 +1304,9 @@ class ValorantStatsWindow(QMainWindow):
         self.refresh_button.setEnabled(False)  # disable the button
         try:
             print("Fetching latest Valorant stats...")
-            await valo_rank.valo_stats(on_update=self.safe_load_players)  # await your async API call
+            await self.valo_rank.valo_stats(on_update=self.safe_load_players)  # await your async API call
             print("✅ Data fetched. Refreshing table...")
-            self.safe_load_players(valo_rank.frontend_data)
+            self.safe_load_players(self.valo_rank.frontend_data)
             self.update_metadata()
         finally:
             self.refresh_button.setEnabled(True)
@@ -1092,7 +1370,7 @@ class ValorantStatsWindow(QMainWindow):
         gamemode = "Unknown"
         server = "Unknown"
 
-        gs = getattr(valo_rank, "gs", None)
+        gs = getattr(self.valo_rank, "gs", None)
         if isinstance(gs, (list, tuple)):
             if len(gs) > 0 and gs[0]:
                 gamemode = str(gs[0])
