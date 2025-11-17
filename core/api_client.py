@@ -3,7 +3,6 @@ from core.local_api import LockfileHandler
 from core.valorant_uuid import UUIDHandler
 from core.skins import SkinHandler
 import requests
-import valo_api
 import sys
 import os
 import math
@@ -11,12 +10,6 @@ import time
 import asyncio
 import json
 import aiohttp
-from dotenv import load_dotenv
-from valo_api import set_api_key
-from valo_api.endpoints import (get_mmr_details_by_puuid_v2, get_match_history_by_puuid_v3_async,
-get_account_details_by_puuid_v2, get_match_history_by_puuid_v3, get_lifetime_matches_by_puuid_v1)
-from valo_api.exceptions.rate_limit import rate_limit
-from valo_api.exceptions.valo_api_exception import ValoAPIException
 
 class ValoRank:
     def __init__(self):
@@ -35,6 +28,10 @@ class ValoRank:
         self.gs = []    # Gamemode and Server
         self.skins = {}
         self.done = 0
+        self.uuid_handler = UUIDHandler()
+        self.uuid_handler.agent_uuid_function()
+        self.skin_handler = SkinHandler()
+        self.version_data = requests.get("https://valorant-api.com/v1/version").json()
         self.gamemode_list = {
             "Swiftplay": "Swiftplay",
             "Deathmatch": "Deathmatch",
@@ -42,17 +39,34 @@ class ValoRank:
             "Quickbomb": "Spike Rush",
             "Bomb": "Competitive",
         }
-
-        dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-        loaded = load_dotenv(dotenv_path)
-
-        if not loaded:
-            base_path = getattr(sys, "_MEIPASS", os.path.abspath("."))
-            dotenv_path = os.path.join(base_path, "core", ".env")
-            loaded = load_dotenv(dotenv_path)
-
-        VAL_API_KEY = os.getenv("VAL_API_KEY")
-        valo_api.set_api_key(VAL_API_KEY)
+        self.ttr = {
+            0: "Unranked",
+            3: "Iron 1",
+            4: "Iron 2",
+            5: "Iron 3",
+            6: "Bronze 1",
+            7: "Bronze 2",
+            8: "Bronze 3",
+            9: "Silver 1",
+            10: "Silver 2",
+            11: "Silver 3",
+            12: "Gold 1",
+            13: "Gold 2",
+            14: "Gold 3",
+            15: "Platinum 1",
+            16: "Platinum 2",
+            17: "Platinum 3",
+            18: "Diamond 1",
+            19: "Diamond 2",
+            20: "Diamond 3",
+            21: "Ascendant 1",
+            22: "Ascendant 2",
+            23: "Ascendant 3",
+            24: "Immortal 1",
+            25: "Immortal 2",
+            26: "Immortal 3",
+            27: "Radiant"
+        }
 
     # Refreshes frontend
     async def updater_func(self, on_update):
@@ -158,13 +172,15 @@ class ValoRank:
 
             self.gs[1] = self.gs[1][29:-2].capitalize()
 
+            if self.gs[0] == "Competitive":
+                if self.handler.player_info_pre:
+                    if self.handler.player_info_pre["IsRanked"] == 0:
+                        self.gs[0] = "Unrated"
+
     async def valo_stats(self, on_update=None):
         self.handler = MatchDetectionHandler()
         await asyncio.to_thread(self.handler.player_info_retrieval)
 
-        self.uuid_handler = UUIDHandler()
-        self.skin_handler = SkinHandler()
-        self.uuid_handler.agent_uuid_function()
         try:
             current_match_id = self.handler.in_match
         except AttributeError:
@@ -189,8 +205,6 @@ class ValoRank:
 
         if self.handler.player_info_pre:
             self.pip = self.handler.player_info_pre
-        else:
-            pass
 
         if self.handler.player_info:
             if not self.cmp:
@@ -203,15 +217,11 @@ class ValoRank:
                             self.cmp.append(player.get("Subject"))
                     except:
                         pass
-            else:
-                pass
+
         elif self.pip:
             if not self.cmp:
                 for player in self.pip["AllyTeam"]["Players"]:
                     self.cmp.append(player.get("Subject"))
-            else:
-                pass
-
 
         if self.cmp:
             if len(self.ca) < 10:
@@ -223,42 +233,53 @@ class ValoRank:
                     for player in self.pip["AllyTeam"]["Players"]:
                         self.ca[player.get("Subject")] = player.get("CharacterID")
 
-        def to_dict(obj):
-            if isinstance(obj, list):
-                return [to_dict(item) for item in obj]
-            if not hasattr(obj, "__dict__"):
-                return obj
-            result = {}
-            for key, value in obj.__dict__.items():
-                result[key] = to_dict(value)
-            return result
-
-        def get_player_stats(data):
-            results = []
-
-            for match in data:
-                stats = match.get("stats")
-
-                results.append(stats.get("shots"))
-
-            return results
+        self.modified_header = self.handler.match_id_header
+        self.modified_header["X-Riot-ClientVersion"] = self.version_data["data"]["riotClientVersion"]
 
         for puuid in self.cmp:
             if puuid in self.used_puuids:
                 continue
             else:
                 self.valorant_mmr = None
-                try:
-                    self.valorant_mmr = get_mmr_details_by_puuid_v2(region="eu", puuid=f"{puuid}")
-                except ValoAPIException as e:
-                    if e.status == 429:
-                        print("Rate Limit Reached")
-                    else:
-                        pass
 
+                self.valorant_mmr = requests.get(
+                    f"https://pd.eu.a.pvp.net/mmr/v1/players/{puuid}",
+                    headers=self.modified_header
+                ).json()
 
                 if self.valorant_mmr:
-                    self.mmr[puuid] = to_dict(self.valorant_mmr)
+                    peak_rank = 0
+                    peak_act = None
+                    try:
+                        for season in self.valorant_mmr["QueueSkills"]["competitive"]["SeasonalInfoBySeasonID"]:
+                            for tier in self.valorant_mmr["QueueSkills"]["competitive"]["SeasonalInfoBySeasonID"][season]["WinsByTier"]:
+                                if int(tier) > peak_rank:
+                                    peak_rank = int(tier)
+                                    peak_act = season
+
+                        self.mmr[puuid] = {
+                            "current_data": {
+                                "currenttierpatched": self.ttr[self.valorant_mmr["LatestCompetitiveUpdate"]["TierAfterUpdate"]],
+                                "ranking_in_tier": self.valorant_mmr["LatestCompetitiveUpdate"]["RankedRatingAfterUpdate"]
+                            },
+                            "highest_rank": {
+                                "patched_tier": self.ttr[peak_rank],
+                                "peak_act": self.uuid_handler.season_uuid_function(peak_act),
+                                "season": self.uuid_handler.season_uuid_function(peak_act)
+                            }
+                        }
+                    except TypeError:
+                        self.mmr[puuid] = {
+                            "current_data": {
+                                "currenttierpatched": "Unranked",
+                                "ranking_in_tier": 0
+                            },
+                            "highest_rank": {
+                                "patched_tier": "Unranked",
+                                "peak_act": "N/A",
+                                "season": "N/A"
+                            }
+                        }
                 else:
                     self.mmr[puuid] = {
                         "current_data": {
@@ -373,13 +394,6 @@ class ValoRank:
                     await self.assign_skins()
                     continue
 
-                #if self.valorant_mmr:
-                    #converted = to_dict(self.valorant_mmr)
-                    #with open(f"account_mmr.json", "w", encoding="utf-8") as f:
-                        #json.dump(converted, f, default=lambda o: o.__dict__, indent=2)
-                    #with open(f"account_mmr.json") as a:
-                        #mmr = json.load(a)  # Account MMR Details
-
                 riot_match_ids = []
                 for match in self.riot_matches["History"]:
                     riot_match_ids.append(match["MatchID"])
@@ -401,13 +415,11 @@ class ValoRank:
                 await self.updater_func(on_update)
 
         await self.updater_func(on_update)
-        print(self.frontend_data)
-        print("refreshed")
+
 
         for index, puuid in enumerate(self.cmp):
             self.frontend_data[puuid]["agent"] = self.uuid_handler.agent_converter(self.ca[puuid])
             await self.updater_func(on_update)
-            print(self.frontend_data)
 
     async def calc_stats(self, puuid, on_update=None):
         stats_list = []
@@ -543,7 +555,6 @@ class ValoRank:
         self.end += 10
 
     async def assign_skins(self, on_update=None):
-        print("assigning skins")
         if len(self.used_puuids) == len(self.cmp):
             for puuid in self.used_puuids:
                 self.frontend_data[puuid]["skins"] = self.skin_handler.assign_skins(puuid, self.handler.in_match, self.handler.match_id_header)
@@ -569,25 +580,3 @@ class ValoRank:
 
         print(f"❌ Failed to fetch {url} after {retries} retries.")
         return None
-
-
-
-
-
-
-
-
-
-
-
-
-
-        
-        
-
-
-
-
-
-
-

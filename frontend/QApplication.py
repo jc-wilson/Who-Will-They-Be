@@ -200,7 +200,10 @@ class WeaponPopup(QDialog):
 
         pixmap = None
         if skin_id:
-            pixmap = self.skin_icons.get(str(skin_id))
+            if hasattr(self, "skin_icons"):
+                pixmap = self.skin_icons.get(str(skin_id))
+            else:
+                pixmap = None
 
         if pixmap:
             preview.setPixmap(
@@ -315,7 +318,8 @@ class ValorantStatsWindow(QMainWindow):
         self.rank_icons = download_and_cache_rank_icons()
 
         from core.asset_loader import download_and_cache_skins
-        self.skin_icons = download_and_cache_skins()
+        task = asyncio.create_task(download_and_cache_skins())
+        task.add_done_callback(self._on_skins_loaded)
 
         # ─────────────── Layout ───────────────
         header_frame = QFrame()
@@ -405,6 +409,10 @@ class ValorantStatsWindow(QMainWindow):
     # ---------------------------------------------------------
     # Utility setup methods
     # ---------------------------------------------------------
+    def _on_skins_loaded(self, task):
+        self.skin_icons = task.result()
+        self.safe_load_players(self.valo_rank.frontend_data)
+
     def open_skin_popup(self, player_name, skins):
         popup = WeaponPopup(player_name, skins, getattr(self, "skin_icons", {}), self)
         popup.exec()
@@ -745,7 +753,6 @@ class ValorantStatsWindow(QMainWindow):
 
         info_column.addLayout(stats_grid)
 
-        print(player.get("skins"))
         skin_button = self.create_skin_button(player)
         info_column.addWidget(skin_button, alignment=Qt.AlignLeft)
         card_layout.addLayout(info_column, 1)

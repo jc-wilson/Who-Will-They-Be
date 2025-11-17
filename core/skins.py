@@ -9,7 +9,6 @@ class SkinHandler:
         self.skins = None
 
     def get_skins(self, match_uuid, match_id_header):
-        print("Getting player skins")
         self.skins = requests.get(
             f"https://glz-eu-1.eu.a.pvp.net/core-game/v1/matches/{match_uuid}/loadouts",
             headers=match_id_header
@@ -24,7 +23,6 @@ class SkinHandler:
                 ).json()
         except KeyError:
             pass
-        print(self.skins)
 
     def convert_skins(self, puuid):
         skin_uuids = []
@@ -41,10 +39,8 @@ class SkinHandler:
                     for weapons in player["Items"]:
                         skin_uuids.append(player["Items"][weapons]["Sockets"]["3ad1b2b2-acdb-4524-852f-954a76ddae0a"]["Item"]["ID"])
 
-        print(f"skin uuids: {skin_uuids}")
         self.converted_skins[puuid] = skin_uuids
 
-        print(f"Player skins: {self.converted_skins}")
 
 
 

@@ -14,7 +14,7 @@ def instalock_agent(agent_uuid):
             headers=handler.match_id_header
         )
 
-    time.sleep(1)
+    time.sleep(0.5)
 
     if handler.in_match:
         lock_agent = requests.post(

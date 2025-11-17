@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PySide6.QtGui import QPixmap
 
@@ -77,7 +78,7 @@ def download_and_cache_rank_icons(cache_dir="assets/ranks"):
     print(f"✅ Loaded {len(icons)} rank icons (cached in {cache_dir})")
     return icons
 
-def download_and_cache_skins(cache_dir="assets/skins", threads=40):
+async def download_and_cache_skins(cache_dir="assets/skins", threads=40):
     """
     Downloads ALL Valorant weapon skins + chromas at high speed using multithreading.
     Saves each icon using its UUID as filename.
@@ -143,11 +144,14 @@ def download_and_cache_skins(cache_dir="assets/skins", threads=40):
 
     print("\n✅ Download complete. Loading pixmaps...")
 
+    async def load_pixmap(path):
+        return await asyncio.to_thread(QPixmap, path)
+
     # Load images into QPixmap
     pixmaps = {}
     for uuid, file_path in file_map.items():
         if os.path.exists(file_path):
-            pixmaps[uuid] = QPixmap(file_path)
+            pixmaps[uuid] = await load_pixmap(file_path)
 
     print(f"🎉 Loaded {len(pixmaps)} total icons.")
     return pixmaps

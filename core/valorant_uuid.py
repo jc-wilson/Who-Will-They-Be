@@ -4,6 +4,14 @@ import json
 class UUIDHandler:
     def __init__(self):
         self.agent_uuid_request = None
+        self.rom_to_int = {
+            "I": "1",
+            "II": "2",
+            "III": "3",
+            "IV": "4",
+            "V": "5",
+            "VI": "6"
+        }
 
     def agent_uuid_function(self):
         try:
@@ -55,8 +63,28 @@ class UUIDHandler:
             for chroma in skin["chromas"]:
                 if chroma["uuid"] == skin_uuid:
                     result = chroma["displayName"]
-        print(result)
         return result
+
+    def season_uuid_function(self, season_uuid):
+        response = requests.get(f"https://valorant-api.com/v1/seasons/{season_uuid}").json()
+        if response["data"]["title"] == None:
+            result = response["data"]["assetPath"]
+            result = result[35:-10]
+            result = result.replace("_", "")
+            result = result.replace("Episode", "e")
+            result = result.replace("Act", "a")
+        else:
+            result = response["data"]["title"]
+            result = result.replace("EPISODE", "e")
+            result = result.replace("ACT", "a")
+            result = result.replace("//", "")
+            result = result + " "
+            for num in self.rom_to_int:
+                if result.find(f" {num} ") > -1:
+                    result = result.replace(num, self.rom_to_int[num])
+            result = result.replace(" ", "")
+        return result
+
 
 
 
