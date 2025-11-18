@@ -400,7 +400,7 @@ class ValorantStatsWindow(QMainWindow):
         self.setCentralWidget(container)
 
         self.apply_theme()
-        self.set_view_mode("cards")
+        self.set_view_mode("compact")
 
         # Populate players if initial data provided
         if players:
@@ -595,7 +595,7 @@ class ValorantStatsWindow(QMainWindow):
     def create_player_card(self, player):
         card = QFrame()
         card.setObjectName("playerCard")
-        card.setMinimumHeight(130)
+        card.setMinimumHeight(0)
 
         card_layout = QHBoxLayout(card)
         card_layout.setContentsMargins(14, 12, 14, 12)

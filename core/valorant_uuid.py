@@ -67,7 +67,11 @@ class UUIDHandler:
 
     def season_uuid_function(self, season_uuid):
         response = requests.get(f"https://valorant-api.com/v1/seasons/{season_uuid}").json()
-        if response["data"]["title"] == None:
+        result = None
+        print(response)
+        if response["status"] != 200:
+            result = "Unranked"
+        elif response["data"]["title"] == None:
             result = response["data"]["assetPath"]
             result = result[35:-10]
             result = result.replace("_", "")
@@ -82,7 +86,9 @@ class UUIDHandler:
             for num in self.rom_to_int:
                 if result.find(f" {num} ") > -1:
                     result = result.replace(num, self.rom_to_int[num])
-            result = result.replace(" ", "")
+        result = result.replace(" ", "")
+        if result.find("5") == 0:
+            result.replace("5", "V", 1)
         return result
 
 

@@ -80,7 +80,7 @@ class ValoRank:
         except:
             self.frontend_data = {}
             await self.updater_func(on_update)
-            if self.handler.party_id.status_code != 500:
+            if self.handler.party_id.status_code == 200:
                 self.handler.party_id = self.handler.party_id.json()
                 print(self.handler.party_id["CurrentPartyID"])
                 party_info = requests.get(
@@ -247,39 +247,32 @@ class ValoRank:
                     headers=self.modified_header
                 ).json()
 
-                if self.valorant_mmr:
+                print(self.valorant_mmr)
+
+                if self.valorant_mmr["LatestCompetitiveUpdate"]:
                     peak_rank = 0
                     peak_act = None
-                    try:
-                        for season in self.valorant_mmr["QueueSkills"]["competitive"]["SeasonalInfoBySeasonID"]:
+                    for season in self.valorant_mmr["QueueSkills"]["competitive"]["SeasonalInfoBySeasonID"]:
+                        try:
                             for tier in self.valorant_mmr["QueueSkills"]["competitive"]["SeasonalInfoBySeasonID"][season]["WinsByTier"]:
                                 if int(tier) > peak_rank:
                                     peak_rank = int(tier)
                                     peak_act = season
+                        except TypeError:
+                            continue
 
-                        self.mmr[puuid] = {
-                            "current_data": {
-                                "currenttierpatched": self.ttr[self.valorant_mmr["LatestCompetitiveUpdate"]["TierAfterUpdate"]],
-                                "ranking_in_tier": self.valorant_mmr["LatestCompetitiveUpdate"]["RankedRatingAfterUpdate"]
-                            },
-                            "highest_rank": {
-                                "patched_tier": self.ttr[peak_rank],
-                                "peak_act": self.uuid_handler.season_uuid_function(peak_act),
-                                "season": self.uuid_handler.season_uuid_function(peak_act)
-                            }
+
+                    self.mmr[puuid] = {
+                        "current_data": {
+                            "currenttierpatched": self.ttr[self.valorant_mmr["LatestCompetitiveUpdate"]["TierAfterUpdate"]],
+                            "ranking_in_tier": self.valorant_mmr["LatestCompetitiveUpdate"]["RankedRatingAfterUpdate"]
+                        },
+                        "highest_rank": {
+                            "patched_tier": self.ttr[peak_rank],
+                            "peak_act": self.uuid_handler.season_uuid_function(peak_act),
+                            "season": self.uuid_handler.season_uuid_function(peak_act)
                         }
-                    except TypeError:
-                        self.mmr[puuid] = {
-                            "current_data": {
-                                "currenttierpatched": "Unranked",
-                                "ranking_in_tier": 0
-                            },
-                            "highest_rank": {
-                                "patched_tier": "Unranked",
-                                "peak_act": "N/A",
-                                "season": "N/A"
-                            }
-                        }
+                    }
                 else:
                     self.mmr[puuid] = {
                         "current_data": {
