@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QPixmap, QIcon, QFontDatabase, QFont, QColor
 import sys
 import os
+import math
 import asyncio
 import qasync
 from core.api_client import ValoRank
@@ -1298,7 +1299,7 @@ class ValorantStatsWindow(QMainWindow):
     async def run_load_more_matches(self):
         self.refresh_button.setEnabled(False)
         try:
-            await self.valo_rank.load_more_matches(on_update=self.safe_load_players)
+            await self.valo_rank.load_more_matches()
             self.safe_load_players(self.valo_rank.frontend_data)
         finally:
             self.refresh_button.setEnabled(True)
@@ -1311,7 +1312,7 @@ class ValorantStatsWindow(QMainWindow):
         self.refresh_button.setEnabled(False)  # disable the button
         try:
             print("Fetching latest Valorant stats...")
-            await self.valo_rank.valo_stats(on_update=self.safe_load_players)  # await your async API call
+            await self.valo_rank.valo_stats()  # await your async API call
             print("✅ Data fetched. Refreshing table...")
             self.safe_load_players(self.valo_rank.frontend_data)
             self.update_metadata()
@@ -1336,12 +1337,19 @@ class ValorantStatsWindow(QMainWindow):
             return
 
         player_iterable = players.values() if isinstance(players, dict) else players
-        for player in player_iterable:
-            team = player.get("team")
-            if team == "Red":
-                self.left_players.append(player)
-            elif team == "Blue":
-                self.right_players.append(player)
+        for i, player in enumerate(player_iterable):
+            if self.valo_rank.gs[0] == "Deathmatch":
+                print(str(i/2)[2])
+                if str(i/2)[2] == "0":
+                    self.left_players.append(player)
+                else:
+                    self.right_players.append(player)
+            else:
+                team = player.get("team")
+                if team == "Red":
+                    self.left_players.append(player)
+                elif team == "Blue":
+                    self.right_players.append(player)
 
         self.populate_card_layout(self.card_left_layout, self.left_players, "Waiting for Red team...")
         self.populate_card_layout(self.card_right_layout, self.right_players, "Waiting for Blue team...")

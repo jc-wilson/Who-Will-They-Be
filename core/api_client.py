@@ -2,6 +2,7 @@ from core.detection import MatchDetectionHandler
 from core.local_api import LockfileHandler
 from core.valorant_uuid import UUIDHandler
 from core.skins import SkinHandler
+from concurrent.futures import ThreadPoolExecutor
 import requests
 import sys
 import os
@@ -23,8 +24,8 @@ class ValoRank:
         self.match_stats = {}
         self.pip = {}   # Duplicate of player_info_pre so that it doesn't get lost when you load into a match
         self.handler = None
-        self.start = 10
-        self.end = 20
+        self.start = 5
+        self.end = 15
         self.gs = []    # Gamemode and Server
         self.skins = {}
         self.done = 0
@@ -74,12 +75,11 @@ class ValoRank:
             on_update(self.frontend_data)
         await asyncio.sleep(0.05)
 
-    async def lobby_load(self, on_update=None):
+    async def lobby_load(self):
         try:
             self.handler.in_match
         except:
             self.frontend_data = {}
-            await self.updater_func(on_update)
             if self.handler.party_id.status_code == 200:
                 self.handler.party_id = self.handler.party_id.json()
                 print(self.handler.party_id["CurrentPartyID"])
@@ -122,7 +122,6 @@ class ValoRank:
                         "peak_act": "N/A",
                         "team": "Red"
                     }
-                    await self.updater_func(on_update)
             else:
                 puuid = self.handler.user_puuid
                 nt = requests.put(
@@ -146,7 +145,6 @@ class ValoRank:
                     "peak_act": "N/A",
                     "team": "Red"
                 }
-                await self.updater_func(on_update)
 
     # Gamemode and server detection function
     def gs_func(self):
@@ -177,7 +175,7 @@ class ValoRank:
                     if self.handler.player_info_pre["IsRanked"] == 0:
                         self.gs[0] = "Unrated"
 
-    async def valo_stats(self, on_update=None):
+    async def valo_stats(self):
         self.handler = MatchDetectionHandler()
         await asyncio.to_thread(self.handler.player_info_retrieval)
 
@@ -197,8 +195,8 @@ class ValoRank:
             self.mmr = {}
             self.match_stats = {}
             self.pip = {}
-            self.start = 10
-            self.end = 20
+            self.start = 5
+            self.end = 15
             self.gs = []
             self.gs_func()
             self.done = 0
@@ -236,9 +234,9 @@ class ValoRank:
         self.modified_header = self.handler.match_id_header
         self.modified_header["X-Riot-ClientVersion"] = self.version_data["data"]["riotClientVersion"]
 
-        for puuid in self.cmp:
+        async def stat_collector(puuid):
             if puuid in self.used_puuids:
-                continue
+                return
             else:
                 self.valorant_mmr = None
 
@@ -261,6 +259,21 @@ class ValoRank:
                         except TypeError:
                             continue
 
+                    prefix = self.uuid_handler.season_uuid_function(peak_act)[0:2]
+
+                    if prefix in ("e1", "e2", "e3", "e4") and peak_rank > 20:
+                        self.mmr[puuid] = {
+                            "current_data": {
+                                "currenttierpatched": self.ttr[self.valorant_mmr["LatestCompetitiveUpdate"]["TierAfterUpdate"]],
+                                "ranking_in_tier": self.valorant_mmr["LatestCompetitiveUpdate"][
+                                    "RankedRatingAfterUpdate"]
+                            },
+                            "highest_rank": {
+                                "patched_tier": self.ttr[peak_rank + 3],
+                                "peak_act": self.uuid_handler.season_uuid_function(peak_act),
+                                "season": self.uuid_handler.season_uuid_function(peak_act)
+                            }
+                        }
 
                     self.mmr[puuid] = {
                         "current_data": {
@@ -296,7 +309,7 @@ class ValoRank:
                 self.mmr[puuid]["current_data"]["currenttierpatched"] = self.mmr[puuid]["current_data"]["currenttierpatched"].replace("Unrated", "Unranked")
 
                 self.riot_matches = requests.get(
-                    f"https://pd.eu.a.pvp.net/match-history/v1/history/{puuid}?startIndex={0}&endIndex={10}&queue=competitive",
+                    f"https://pd.eu.a.pvp.net/match-history/v1/history/{puuid}?startIndex={0}&endIndex={5}&queue=competitive",
                     headers=self.handler.match_id_header
                 ).json()
 
@@ -339,10 +352,9 @@ class ValoRank:
                             "peak_act": self.mmr[puuid]["highest_rank"]["season"].upper(),
                             "team": bor
                         }
-                        await self.updater_func(on_update)
                         self.used_puuids.append(puuid)
                         await self.assign_skins()
-                        continue
+                        return
 
                     match_id_name = self.riot_name["History"][0]["MatchID"]
                     match_stats_name = requests.get(
@@ -382,10 +394,9 @@ class ValoRank:
                         "peak_act": self.mmr[puuid]["highest_rank"]["season"].upper(),
                         "team": bor
                     }
-                    await self.updater_func(on_update)
                     self.used_puuids.append(puuid)
                     await self.assign_skins()
-                    continue
+                    return
 
                 riot_match_ids = []
                 for match in self.riot_matches["History"]:
@@ -405,16 +416,14 @@ class ValoRank:
                 await gather_matches()
                 self.used_puuids.append(puuid)
                 await self.calc_stats(puuid)
-                await self.updater_func(on_update)
 
-        await self.updater_func(on_update)
-
+        tasks = [asyncio.create_task(stat_collector(puuid)) for puuid in self.cmp]
+        await asyncio.gather(*tasks)
 
         for index, puuid in enumerate(self.cmp):
             self.frontend_data[puuid]["agent"] = self.uuid_handler.agent_converter(self.ca[puuid])
-            await self.updater_func(on_update)
 
-    async def calc_stats(self, puuid, on_update=None):
+    async def calc_stats(self, puuid):
         stats_list = []
         wl_list = []  # tracks wins and losses
         hs_list = []
@@ -505,12 +514,11 @@ class ValoRank:
             "team": bor
         }
         await self.assign_skins()
-        await self.updater_func(on_update)
 
         print(
             f"{stats_list[0]['name']}#{stats_list[0]['tag']}'s ({self.uuid_handler.agent_converter(self.ca[puuid])}) level is {stats_list[0]['level']} | W/L % in last {match_count_kd} matches: {wl} | ACS in the last {match_count_kd} matches: {str(acs)[:5]} | KD in last {match_count_kd} matches: {str(kd)[0:4]} | HS in last {match_count_kd} matches: hs is: {str(hs)[:4]}% | current rank is: {self.mmr[puuid]['current_data']['currenttierpatched']} | current rr is: {self.mmr[puuid]['current_data']['ranking_in_tier']} | highest rank was: {self.mmr[puuid]['highest_rank']['patched_tier']} | peak act was: {self.mmr[puuid]['highest_rank']['season']}")
 
-    async def load_more_matches(self, on_update=None):
+    async def load_more_matches(self):
         for puuid in self.cmp:
             if self.zero_check[puuid] <= self.start:
                 continue
@@ -540,8 +548,6 @@ class ValoRank:
 
                 await self.calc_stats(puuid)
 
-                await self.updater_func(on_update)
-
                 print("load more matches finished")
 
         self.start += 10
@@ -551,7 +557,6 @@ class ValoRank:
         if len(self.used_puuids) == len(self.cmp):
             for puuid in self.used_puuids:
                 self.frontend_data[puuid]["skins"] = self.skin_handler.assign_skins(puuid, self.handler.in_match, self.handler.match_id_header)
-                await self.updater_func(on_update)
 
     async def fetch(self, session, url, retries=3):
         for attempt in range(retries):

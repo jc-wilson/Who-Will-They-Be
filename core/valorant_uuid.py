@@ -87,8 +87,8 @@ class UUIDHandler:
                 if result.find(f" {num} ") > -1:
                     result = result.replace(num, self.rom_to_int[num])
         result = result.replace(" ", "")
-        if result.find("5") == 0:
-            result.replace("5", "V", 1)
+        if result == ("525a5"):
+            result = "v25a5"
         return result
 
 

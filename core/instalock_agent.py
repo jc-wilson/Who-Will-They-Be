@@ -1,6 +1,5 @@
 import requests
 import time
-from core.valorant_uuid import UUIDHandler
 from core.detection import MatchDetectionHandler
 
 def instalock_agent(agent_uuid):
