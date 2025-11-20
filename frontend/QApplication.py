@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow,
     QVBoxLayout, QGridLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
     QComboBox, QFrame, QSplitter, QScrollArea, QStackedWidget, QToolButton,
-    QButtonGroup, QDialog, QGraphicsDropShadowEffect, QSizePolicy
+    QButtonGroup, QDialog, QGraphicsDropShadowEffect, QSizePolicy, QProgressBar
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QPixmap, QIcon, QFontDatabase, QFont, QColor
@@ -22,10 +22,8 @@ from core.valorant_uuid import UUIDHandler
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller .exe"""
     try:
-        # When running from the .exe, PyInstaller stores files in a temp folder
         base_path = sys._MEIPASS
     except Exception:
-        # When running in normal dev mode (not compiled)
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
@@ -112,25 +110,21 @@ class WeaponPopup(QDialog):
                 border-radius: 22px;
                 border: 1px solid rgba(255, 255, 255, 0.05);
             }
-
             #title {
                 color: #e3e8ff;
                 font-size: 22px;
                 font-weight: 600;
             }
-
             #subtitle {
                 color: #a0abcc;
                 font-size: 14px;
             }
-
             #weaponLabel {
                 color: #8c95b4;
                 font-size: 12px;
                 letter-spacing: 1px;
                 text-transform: uppercase;
             }
-
             #skinTile {
                 background-color: #13192a;
                 border-radius: 18px;
@@ -138,30 +132,25 @@ class WeaponPopup(QDialog):
                 min-width: 150px;
                 min-height: 110px;
             }
-
             #skinTile:hover {
                 border: 1px solid rgba(77, 108, 255, 0.6);
                 background-color: #192139;
             }
-
             #skinPreview {
                 background-color: rgba(7, 10, 19, 0.6);
                 border-radius: 12px;
                 border: 1px dashed rgba(255, 255, 255, 0.08);
             }
-
             #skinPreview[empty="true"] {
                 color: #8c95b4;
                 font-size: 11px;
                 letter-spacing: 1px;
             }
-
             #exitTile {
                 background-color: #1f2436;
                 border-radius: 18px;
                 border: 1px solid rgba(255, 255, 255, 0.05);
             }
-
             #exitTile QPushButton {
                 background-color: rgba(255, 255, 255, 0.06);
                 border: none;
@@ -170,7 +159,6 @@ class WeaponPopup(QDialog):
                 font-weight: 700;
                 border-radius: 16px;
             }
-
             #exitTile QPushButton:hover {
                 background-color: rgba(255, 87, 107, 0.35);
             }
@@ -258,14 +246,14 @@ class ValorantStatsWindow(QMainWindow):
         font_families = QFontDatabase.applicationFontFamilies(font_id)
 
         if font_families:
-            app_font = QFont(font_families[0], 11)  # Optional size
+            app_font = QFont(font_families[0], 11)
             QApplication.setFont(app_font)
             print(f"✅ Loaded font: {font_families[0]}")
         else:
             print("⚠️ Failed to load custom font, falling back to default.")
 
         self.setWindowTitle("Who Will They Be")
-        self.setMinimumSize(1500, 720)
+        self.setMinimumSize(1200, 720)
         self.setWindowIcon(QIcon(resource_path("assets/logoone.png")))
 
         # Instalock agent list
@@ -310,6 +298,13 @@ class ValorantStatsWindow(QMainWindow):
         # View toggle control
         self.view_toggle = self.build_view_toggle()
         self.view_mode = "cards"
+
+        # Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(4)
+        self.progress_bar.setObjectName("loadingBar")
+        self.progress_bar.hide()
 
         # Preload assets
         from core.asset_loader import download_and_cache_agent_icons
@@ -376,24 +371,26 @@ class ValorantStatsWindow(QMainWindow):
         card_splitter.setHandleWidth(4)
         card_splitter.setSizes([750, 750])
 
+        # Compact Panel Splitter (Using QSplitter so users can adjust width)
         left_compact_panel, self.compact_left_layout = self.build_compact_team_panel("red")
         right_compact_panel, self.compact_right_layout = self.build_compact_team_panel("blue")
 
-        compact_container = QWidget()
-        compact_layout = QHBoxLayout(compact_container)
-        compact_layout.setContentsMargins(0, 0, 0, 0)
-        compact_layout.setSpacing(20)
-        compact_layout.addWidget(left_compact_panel)
-        compact_layout.addWidget(right_compact_panel)
+        compact_splitter = QSplitter(Qt.Horizontal)
+        compact_splitter.addWidget(left_compact_panel)
+        compact_splitter.addWidget(right_compact_panel)
+        compact_splitter.setChildrenCollapsible(False)
+        compact_splitter.setHandleWidth(4)
+        compact_splitter.setSizes([750, 750])
 
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(card_splitter)
-        self.view_stack.addWidget(compact_container)
+        self.view_stack.addWidget(compact_splitter)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(20)
+        layout.setSpacing(10)
         layout.addWidget(header_frame)
+        layout.addWidget(self.progress_bar) # Added Progress Bar here
         layout.addWidget(self.view_stack, 1)
 
         container = QWidget()
@@ -512,11 +509,19 @@ class ValorantStatsWindow(QMainWindow):
         panel_layout.setContentsMargins(15, 12, 15, 15)
         panel_layout.setSpacing(12)
 
-        content_layout = QVBoxLayout()
+        # Added Scroll Area here for Compact view too
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(10)
         content_layout.setAlignment(Qt.AlignTop)
-        panel_layout.addLayout(content_layout)
+
+        scroll_area.setWidget(content)
+        panel_layout.addWidget(scroll_area)
 
         return panel, content_layout
 
@@ -556,6 +561,8 @@ class ValorantStatsWindow(QMainWindow):
     def create_compact_stat(self, title, value):
         wrapper = QFrame()
         wrapper.setObjectName("compactStat")
+        # Added minimum width to prevent disappearing when resized
+        wrapper.setMinimumWidth(65)
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(8, 5, 8, 5)
         layout.setSpacing(2)
@@ -564,8 +571,8 @@ class ValorantStatsWindow(QMainWindow):
         title_label.setObjectName("compactStatTitle")
         value_label = QLabel(value)
         value_label.setObjectName("compactStatValue")
-        layout.addWidget(title_label)
-        layout.addWidget(value_label)
+        layout.addWidget(title_label, alignment=Qt.AlignCenter)
+        layout.addWidget(value_label, alignment=Qt.AlignCenter)
         return wrapper, value_label
 
     def create_skin_button(self, player, compact=False):
@@ -800,6 +807,8 @@ class ValorantStatsWindow(QMainWindow):
         name_label.setText(
             f"<a href='{self.build_tracker_url(player_name)}'>{escape(player_name)}</a>"
         )
+        # Added minimum width for name so it doesn't vanish
+        name_label.setMinimumWidth(100)
         name_row.addWidget(name_label, 1)
 
         level_value = player.get("level", "N/A")
@@ -972,6 +981,12 @@ class ValorantStatsWindow(QMainWindow):
             " border-radius: 22px;"
             " border: 1px solid rgba(63, 76, 107, 0.45);"
             " padding: 3px;"
+            "}"
+            "QProgressBar#loadingBar {"
+            " border: none; background: rgba(255,255,255,0.05);"
+            "}"
+            "QProgressBar#loadingBar::chunk {"
+            " background-color: #355cff;"
             "}"
             "QLabel#appTitle {"
             " font-size: 24px;"
@@ -1288,7 +1303,6 @@ class ValorantStatsWindow(QMainWindow):
             self.dodge_button.setEnabled(True)
 
     def run_valo_stats(self):
-        """Run the async refresh task without blocking UI"""
         asyncio.create_task(self.refresh_data())
 
     def run_load_more_matches_button(self):
@@ -1298,33 +1312,37 @@ class ValorantStatsWindow(QMainWindow):
 
     async def run_load_more_matches(self):
         self.refresh_button.setEnabled(False)
+        self.progress_bar.show()
+        self.progress_bar.setRange(0, 0)
         try:
             await self.valo_rank.load_more_matches()
             self.safe_load_players(self.valo_rank.frontend_data)
         finally:
             self.refresh_button.setEnabled(True)
             self.load_more_matches_button.setEnabled(True)
+            self.progress_bar.hide()
 
     async def refresh_data(self):
         if not self.refresh_button.isEnabled():
             return
 
-        self.refresh_button.setEnabled(False)  # disable the button
+        self.refresh_button.setEnabled(False)
+        self.progress_bar.show()
+        self.progress_bar.setRange(0, 0) # Indeterminate mode
         try:
             print("Fetching latest Valorant stats...")
-            await self.valo_rank.valo_stats()  # await your async API call
+            await self.valo_rank.valo_stats()
             print("✅ Data fetched. Refreshing table...")
             self.safe_load_players(self.valo_rank.frontend_data)
             self.update_metadata()
         finally:
             self.refresh_button.setEnabled(True)
+            self.progress_bar.hide()
 
     # ---------------------------------------------------------
     # Main data-loading logic (two-column layout)
     # ---------------------------------------------------------
     def load_players(self, players):
-        """Display player entries split into left (Red) and right (Blue) teams."""
-
         self.left_players = []
         self.right_players = []
 
@@ -1402,11 +1420,8 @@ class ValorantStatsWindow(QMainWindow):
 async def main():
     window = ValorantStatsWindow([])
     window.show()
-
-    # Start fetching data asynchronously
     asyncio.create_task(window.refresh_data())
-
-    return window  # Keep a reference so it doesn't get garbage-collected
+    return window
 
 
 if __name__ == "__main__":
@@ -1416,7 +1431,6 @@ if __name__ == "__main__":
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    # Start async app
     window = loop.run_until_complete(main())
     with loop:
         loop.run_forever()
