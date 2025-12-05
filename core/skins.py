@@ -40,10 +40,6 @@ class SkinHandler:
                         skin_uuids.append(player["Items"][weapons]["Sockets"]["3ad1b2b2-acdb-4524-852f-954a76ddae0a"]["Item"]["ID"])
 
         self.converted_skins[puuid] = skin_uuids
-        print(self.converted_skins[puuid])
-
-
-
 
     def assign_skins(self, puuid, match_uuid, match_id_header):
         if not self.skins:

@@ -200,6 +200,8 @@ class ValoRank:
             self.gs = []
             self.gs_func()
             self.done = 0
+            self.skin_handler.skins = None
+            self.skin_handler.skins_pre = None
 
         if self.handler.player_info_pre:
             self.pip = self.handler.player_info_pre
@@ -234,6 +236,7 @@ class ValoRank:
         self.modified_header = self.handler.match_id_header
         self.modified_header["X-Riot-ClientVersion"] = self.version_data["data"]["riotClientVersion"]
 
+        print(self.cmp)
         async def stat_collector(puuid):
             if puuid in self.used_puuids:
                 return
