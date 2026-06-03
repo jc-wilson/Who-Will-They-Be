@@ -1,3 +1,4 @@
+import base64
 import json
 from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -8,6 +9,8 @@ import urllib3
 from core.SharedValues import localhostChatHost
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+GEO_PAS_URL = 'https://riot-geo.pas.si.riotgames.com/pas/v1/service/chat'
 
 """This class crates an HTTP proxy to intercept the communication between the riot client and the riot server
     For that it creates a HTTP server using HTTPServer which is using the IP onto which the riot client was modified (127.0.0.1:35479)
@@ -92,23 +95,39 @@ class ConfigMITM:
         handler.send_header("Content-Type", "application/json")
         handler.end_headers()
 
-        if handler.path.startswith('/api/v1/config/player') and response.status_code == 200:
-            data = self.patch_client_config(json.loads(response.text))
-            if 'chat.affinities' in data:
-                handler.wfile.write(json.dumps(data).encode('utf-8'))
-            else:
+        if response.status_code == 200:
+            try:
+                data = json.loads(response.text)
+            except (TypeError, json.JSONDecodeError):
                 handler.wfile.write(response.content)
-        else:
-            handler.wfile.write(response.content)
+                return
 
-    def patch_client_config(self, data: dict) -> dict:
+            patched = self.patch_client_config(data, headers=headers)
+            if patched is not data or 'chat.affinities' in patched:
+                handler.wfile.write(json.dumps(patched).encode('utf-8'))
+                return
+
+        handler.wfile.write(response.content)
+
+    def patch_client_config(self, data: dict, headers: dict | None = None) -> dict:
         if 'chat.affinities' not in data:
             return data
 
+        affinity_hosts = []
+        if isinstance(data.get('chat.affinities'), dict):
+            affinity_hosts = [
+                host for host in data['chat.affinities'].values()
+                if host
+            ]
+
         original_host = data.get('chat.host')
+        if original_host is None and affinity_hosts:
+            original_host = affinity_hosts[0]
         original_port = data.get('chat.port')
-        if original_host is None and isinstance(data.get('chat.affinities'), dict):
-            original_host = next(iter(data['chat.affinities'].values()), None)
+
+        affinity_host = self._get_affinity_chat_host(data, headers or {})
+        if affinity_host:
+            original_host = affinity_host
 
         if original_host is not None and original_port is not None:
             self.upstream_chat_host = original_host
@@ -118,6 +137,10 @@ class ConfigMITM:
                 'riotHost': original_host,
                 'riotPort': original_port,
             }]
+            print(
+                f"[ConfigMITM] chat upstream={self.upstream_chat_host}:{self.upstream_chat_port} "
+                f"original_chat_host={data.get('chat.host')} affinities={affinity_hosts}"
+            )
 
         for region in list(data['chat.affinities'].keys()):
             data['chat.affinities'][region] = localhostChatHost
@@ -125,6 +148,40 @@ class ConfigMITM:
         data['chat.port'] = self.xmpp_port
         data['chat.host'] = localhostChatHost
         return data
+
+    def _get_affinity_chat_host(self, data: dict, headers: dict) -> str | None:
+        if not data.get('chat.affinity.enabled'):
+            return None
+        affinities = data.get('chat.affinities')
+        if not isinstance(affinities, dict):
+            return None
+
+        authorization = None
+        for key, value in headers.items():
+            if str(key).lower() == 'authorization':
+                authorization = value
+                break
+        if not authorization:
+            return None
+
+        try:
+            response = requests.get(
+                GEO_PAS_URL,
+                headers={'Authorization': authorization},
+                verify=False,
+                timeout=10,
+            )
+            response.raise_for_status()
+            jwt_payload = response.text.split('.')[1]
+            jwt_payload += '=' * (-len(jwt_payload) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(jwt_payload.encode('utf-8')).decode('utf-8'))
+            affinity = payload.get('affinity')
+            if affinity in affinities:
+                print(f"[ConfigMITM] affinity={affinity} upstream={affinities[affinity]}")
+                return affinities[affinity]
+        except Exception as exc:
+            print(f"[ConfigMITM] affinity lookup failed, using default chat server: {exc}")
+        return None
 
     def get_upstream_chat_endpoint(self):
         if self.upstream_chat_host is None or self.upstream_chat_port is None:

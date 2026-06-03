@@ -57,7 +57,7 @@ from core.presence_mode import (
 )
 from core.queue_snipe import QueueSnipeService
 from core.startup_coordinator import AppStartupCoordinator
-from core.remote_policy import check_banlist, check_killswitch
+from core.remote_policy import check_banlist, check_killswitch, check_xmpp_killswitch
 from core.co_play_history import apply_live_match_co_play_history
 from core.player_icons import (
     PLAYER_ICONS_URL,
@@ -72,7 +72,7 @@ from core.asset_loader import (
     load_buddy_pixmap,
 )
 
-CURRENT_VERSION = "1.12"
+CURRENT_VERSION = "1.12.2"
 UPDATE_CHECK_URL = "https://ValScanner.com/version.json"
 WEBSITE_URL = "https://ValScanner.com/"
 APP_INSTANCE_KEY = "ValScanner.SingleInstance"
@@ -3805,15 +3805,29 @@ class ValorantStatsWindow(QMainWindow):
         running = ", ".join(self.startup_coordinator.running_processes) or "Riot Client / Valorant"
         prompt = QMessageBox()
         prompt.setWindowTitle("Restart Riot Client")
-        prompt.setIcon(QMessageBox.Question)
-        prompt.setText("Party detection, Appear Offline, and Queue Sniping needs Riot Client to restart before startup can finish.")
+        prompt.setIcon(QMessageBox.Warning)
+        prompt.setTextFormat(Qt.RichText)
+        prompt.setText(
+            "<span style='color: #ff2f2f; font-size: 18px; font-weight: 900;'>"
+            "IMPORTANT RISK WARNING"
+            "</span><br><br>"
+            "Party detection, Appear Offline, and Queue Sniping need Riot Client to restart before startup can finish."
+        )
         prompt.setInformativeText(
-            f"Currently running: {running}\n\n"
-            "Pressing Yes will close Valorant and Riot Client, then launch Valorant for you.\n\n"
-            "Pressing No will keep ValScanner open, but Party Detection, Appear Offline, and Queue Sniping will stay disabled until ValScanner is restarted."
+            f"Currently running: {running}<br><br>"
+            "Pressing Yes will close Valorant and Riot Client, then launch Valorant for you.<br><br>"
+            "Pressing No will keep ValScanner open, but Usernames, Party Detection, Appear Offline, and Queue Sniping will stay disabled until ValScanner is restarted.<br><br>"
+            "<div style='border: 3px solid #ff2f2f; background-color: #3b0000; color: #ffffff; padding: 14px; margin-top: 8px;'>"
+            "<span style='color: #ff4a4a; font-size: 16px; font-weight: 900;'>WARNING: LAUNCH AT YOUR OWN RISK</span><br><br>"
+            "There have been cooldowns and account suspensions reported when launching the game through third-party tools.<br><br>"
+            "By pressing Yes and launching Valorant through ValScanner, you accept full responsibility for any consequences. "
+            "ValScanner and its developer accept no liability for any account cooldowns, restrictions, suspensions, bans, or other penalties."
+            "</div>"
         )
         prompt.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        prompt.setDefaultButton(QMessageBox.Yes)
+        prompt.button(QMessageBox.Yes).setText("Yes, Launch Valorant")
+        prompt.button(QMessageBox.No).setText("No, Keep Disabled")
+        prompt.setDefaultButton(QMessageBox.No)
         prompt.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         prompt.setWindowModality(Qt.ApplicationModal)
         QTimer.singleShot(0, prompt.raise_)
@@ -4422,7 +4436,10 @@ class ValorantStatsWindow(QMainWindow):
                 ready = await handler.lockfile_data_function(retries=1)
                 if not ready or not handler.port or not handler.password:
                     await self.startup_coordinator.ensure_riot_with_mitm()
-                    self.set_status_message("Waiting for Riot Client and Valorant...")
+                    if getattr(self.startup_coordinator, "party_detection_forced_disabled", False):
+                        self.set_status_message("Party detection disabled for this session.")
+                    else:
+                        self.set_status_message("Waiting for Riot Client and Valorant...")
                     await asyncio.sleep(5)
                     continue
 
@@ -6532,11 +6549,16 @@ async def main():
         QMessageBox.critical(None, "ValScanner Unavailable", killswitch_decision.reason)
         return None
 
+    xmpp_killswitch_decision = await check_xmpp_killswitch()
+
     await refresh_valorant_api_jsons()
     check_for_updates()
 
     window = ValorantStatsWindow([])
-    await window.startup_coordinator.ensure_riot_with_mitm()
+    if xmpp_killswitch_decision.blocked:
+        await window.startup_coordinator.disable_party_detection_for_session()
+    else:
+        await window.startup_coordinator.ensure_riot_with_mitm()
     handler = LockfileHandler()
     if handler.puuid and await window.enforce_remote_ban_policy(handler.puuid):
         return None

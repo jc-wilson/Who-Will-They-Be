@@ -1,4 +1,5 @@
 import os
+import socket
 import ssl
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ from core.SharedValues import localhostPfxUrl
 
 
 CERTIFICATE_CACHE_DAYS = 20
+LOCALHOST_EXPECTED_IPS = {"127.0.0.1", "::1"}
 
 
 class LocalCertificateError(RuntimeError):
@@ -16,10 +18,30 @@ class LocalCertificateError(RuntimeError):
 
 
 def get_localhost_server_ssl_context() -> ssl.SSLContext:
+    _log_localhost_dns()
     cert_path, key_path = ensure_localhost_certificate_files()
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+    print(f"[Certificate] loaded localhost XMPP certificate cert={cert_path} key={key_path}")
     return context
+
+
+def _log_localhost_dns() -> None:
+    from core.SharedValues import localhostChatHost
+
+    try:
+        addresses = sorted({
+            result[4][0]
+            for result in socket.getaddrinfo(localhostChatHost, None)
+        })
+    except OSError as exc:
+        print(f"[Certificate] failed to resolve {localhostChatHost}: {exc}")
+        return
+
+    unexpected = [address for address in addresses if address not in LOCALHOST_EXPECTED_IPS]
+    print(f"[Certificate] {localhostChatHost} resolves to {addresses}")
+    if unexpected:
+        print(f"[Certificate] warning: expected localhost DNS, got non-local addresses {unexpected}")
 
 
 def ensure_localhost_certificate_files():
@@ -33,6 +55,7 @@ def ensure_localhost_certificate_files():
         try:
             cert, key, extra_certs = _parse_pfx(pfx_bytes)
             if _certificate_valid_for(cert, CERTIFICATE_CACHE_DAYS):
+                print(f"[Certificate] using cached localhost certificate expiring {cert.not_valid_after}")
                 _write_pem_files(cert_path, key_path, cert, key, extra_certs)
                 return cert_path, key_path
         except Exception as exc:
@@ -45,6 +68,7 @@ def ensure_localhost_certificate_files():
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     pfx_path.write_bytes(pfx_bytes)
+    print(f"[Certificate] downloaded localhost certificate expiring {cert.not_valid_after}")
     _write_pem_files(cert_path, key_path, cert, key, extra_certs)
     return cert_path, key_path
 

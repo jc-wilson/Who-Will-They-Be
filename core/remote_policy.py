@@ -6,6 +6,7 @@ from core.http_session import SharedSession
 
 
 KILLSWITCH_URL = "https://ValScanner.com/killswitch.json"
+XMPP_KILLSWITCH_URL = "https://ValScanner.com/XMPPkillswitch.json"
 BANLIST_URL = "https://ValScanner.com/banlist.json"
 DEFAULT_KILLSWITCH_REASON = "ValScanner is temporarily unavailable."
 DEFAULT_BAN_REASON = "This account is not allowed to use ValScanner."
@@ -84,6 +85,15 @@ async def check_killswitch(session=None, url=KILLSWITCH_URL):
         data = await fetch_json(url, session=session)
     except Exception as exc:
         print(f"Remote killswitch check failed; allowing launch: {exc}")
+        return PolicyDecision(False, checked=False)
+    return parse_killswitch_policy(data)
+
+
+async def check_xmpp_killswitch(session=None, url=XMPP_KILLSWITCH_URL):
+    try:
+        data = await fetch_json(url, session=session)
+    except Exception as exc:
+        print(f"Remote XMPP killswitch check failed; allowing MITM startup: {exc}")
         return PolicyDecision(False, checked=False)
     return parse_killswitch_policy(data)
 

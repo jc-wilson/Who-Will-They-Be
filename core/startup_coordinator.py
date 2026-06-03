@@ -15,6 +15,7 @@ class AppStartupCoordinator:
         self.mitm_service = RiotMitmService()
         self.restart_required = False
         self.party_detection_enabled = True
+        self.party_detection_forced_disabled = False
         self.last_status = "Initializing..."
         self.running_processes = []
 
@@ -27,7 +28,22 @@ class AppStartupCoordinator:
         self.running_processes = await get_running_game_processes()
         return self.running_processes
 
+    async def _keep_party_detection_disabled(self):
+        self.restart_required = False
+        self.party_detection_enabled = False
+        self.running_processes = []
+        await self.mitm_service.stop()
+        self.set_status("Party detection disabled for this session.")
+        return False
+
+    async def disable_party_detection_for_session(self):
+        self.party_detection_forced_disabled = True
+        return await self._keep_party_detection_disabled()
+
     async def initialize(self):
+        if self.party_detection_forced_disabled:
+            return await self._keep_party_detection_disabled()
+
         lockfile_handler = LockfileHandler()
         riot_ready = await lockfile_handler.lockfile_data_function(retries=1)
         already_running = await is_riot_or_valorant_running() or riot_ready
@@ -59,6 +75,9 @@ class AppStartupCoordinator:
         return True
 
     async def ensure_riot_with_mitm(self):
+        if self.party_detection_forced_disabled:
+            return await self._keep_party_detection_disabled()
+
         if self.mitm_service.can_reuse_active_session():
             self.party_detection_enabled = True
             self.restart_required = False
@@ -93,6 +112,9 @@ class AppStartupCoordinator:
         return True
 
     async def restart_riot_client(self):
+        if self.party_detection_forced_disabled:
+            return await self._keep_party_detection_disabled()
+
         self.set_status("Restarting Riot Client and Valorant for party detection...")
         await self.mitm_service.start()
         await self.mitm_service.restart_riot_client()
@@ -103,11 +125,7 @@ class AppStartupCoordinator:
         return True
 
     async def disable_party_detection(self):
-        self.restart_required = False
-        self.party_detection_enabled = False
-        self.running_processes = []
-        await self.mitm_service.stop()
-        self.set_status("Party detection disabled for this session.")
+        return await self.disable_party_detection_for_session()
 
     async def wait_before_retry(self):
         await asyncio.sleep(self.retry_interval)

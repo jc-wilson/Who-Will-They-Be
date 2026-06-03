@@ -21,16 +21,9 @@ ROSTER_QUERY_RE = re.compile(
     flags=re.IGNORECASE,
 )
 FAKE_PLAYER_PUUID = "41c322a1-b328-495b-a004-5ccd3e45eae8"
-FAKE_PLAYER_JID = f"{FAKE_PLAYER_PUUID}@ares.pvp.net"
+DEFAULT_FAKE_PLAYER_DOMAIN = "eu1.pvp.net"
+FAKE_PLAYER_JID = f"{FAKE_PLAYER_PUUID}@{DEFAULT_FAKE_PLAYER_DOMAIN}"
 FAKE_PLAYER_RESOURCE = "RC-ValScanner"
-FAKE_PLAYER_ROSTER_ITEM = (
-    f"<item jid='{FAKE_PLAYER_JID}' name='ValScanner Offline' subscription='both' puuid='{FAKE_PLAYER_PUUID}'>"
-    "<group priority='9999'>ValScanner</group>"
-    "<state>online</state>"
-    "<id name='ValScanner Offline' tagline='...'/>"
-    "<platforms><riot name='ValScanner Offline' tagline='...'/></platforms>"
-    "</item>"
-)
 
 
 def _find_tag_end(text: str, start_index: int = 0):
@@ -160,6 +153,45 @@ def _parse_xml_attrs(attrs_text: str):
     return [(key, value) for key, _, value in XML_ATTR_RE.findall(attrs_text or "")]
 
 
+def _normalize_xmpp_domain(domain: str | None):
+    normalized = str(domain or "").strip()
+    if normalized.endswith(".pvp.net") and "@" not in normalized and "/" not in normalized:
+        return normalized
+    return DEFAULT_FAKE_PLAYER_DOMAIN
+
+
+def _extract_xmpp_domain(text: str):
+    jid_match = re.search(r"<jid>[^<@\s]+@([^/<>\s]+)/?[^<]*</jid>", text or "", flags=re.IGNORECASE)
+    if jid_match:
+        return _normalize_xmpp_domain(jid_match.group(1))
+
+    attr_match = re.search(
+        r"\b(?:from|to)\s*=\s*(['\"])([^'\"]+?\.pvp\.net)\1",
+        text or "",
+        flags=re.IGNORECASE,
+    )
+    if attr_match:
+        return _normalize_xmpp_domain(attr_match.group(2))
+
+    return None
+
+
+def _build_fake_player_jid(domain: str | None = None):
+    return f"{FAKE_PLAYER_PUUID}@{_normalize_xmpp_domain(domain)}"
+
+
+def _build_fake_player_roster_item(jid: str | None = None):
+    fake_player_jid = jid or FAKE_PLAYER_JID
+    return (
+        f"<item jid='{fake_player_jid}' name='ValScanner Offline' subscription='both' puuid='{FAKE_PLAYER_PUUID}'>"
+        "<group priority='9999'>ValScanner</group>"
+        "<state>online</state>"
+        "<id name='ValScanner Offline' tagline='...'/>"
+        "<platforms><riot name='ValScanner Offline' tagline='...'/></platforms>"
+        "</item>"
+    )
+
+
 def _presence_type(stanza: str):
     for key, value in _parse_xml_attrs(_extract_presence_attrs_text(stanza)):
         if key.lower() == "type":
@@ -189,6 +221,12 @@ def _decode_base64_json(encoded_value: str):
         return json.loads(decoded)
     except Exception:
         return None
+
+
+def _looks_like_tls_record(data: bytes):
+    if len(data) < 3:
+        return False
+    return data[0] in (20, 21, 22, 23) and data[1] == 3 and data[2] in (0, 1, 2, 3, 4)
 
 
 def _extract_party_client_version(presence_element):
@@ -247,20 +285,22 @@ def build_offline_presence_stanza(stanza: str):
     return ElementTree.tostring(presence, encoding="unicode")
 
 
-def _inject_fake_player_into_roster(stanza: str):
-    if FAKE_PLAYER_JID in stanza:
+def _inject_fake_player_into_roster(stanza: str, jid: str | None = None):
+    fake_player_jid = jid or FAKE_PLAYER_JID
+    if FAKE_PLAYER_PUUID in stanza:
         return stanza
     match = ROSTER_QUERY_RE.search(stanza or "")
     if match:
-        return stanza[:match.end()] + FAKE_PLAYER_ROSTER_ITEM + stanza[match.end():]
+        return stanza[:match.end()] + _build_fake_player_roster_item(fake_player_jid) + stanza[match.end():]
     return stanza
 
 
-def _build_fake_roster_push(remove: bool = False):
+def _build_fake_roster_push(remove: bool = False, jid: str | None = None):
+    fake_player_jid = jid or FAKE_PLAYER_JID
     roster_item = (
-        f"<item jid='{FAKE_PLAYER_JID}' subscription='remove' />"
+        f"<item jid='{fake_player_jid}' subscription='remove' />"
         if remove else
-        FAKE_PLAYER_ROSTER_ITEM
+        _build_fake_player_roster_item(fake_player_jid)
     )
     return (
         "<iq type='set' id='valscanner-roster-sync'>"
@@ -271,33 +311,81 @@ def _build_fake_roster_push(remove: bool = False):
     )
 
 
-def _build_fake_player_presence(version: str | None = None, available: bool = True):
+def _build_fake_player_presence(version: str | None = None, available: bool = True, jid: str | None = None):
+    fake_player_jid = jid or FAKE_PLAYER_JID
     if not available:
-        return f"<presence from='{FAKE_PLAYER_JID}/{FAKE_PLAYER_RESOURCE}' type='unavailable' />"
+        return f"<presence from='{fake_player_jid}/{FAKE_PLAYER_RESOURCE}' type='unavailable' />"
 
     safe_version = version or "unknown"
     unix_time_milliseconds = int(datetime.now().timestamp() * 1000)
     encoded_valorant_presence = base64.b64encode(json.dumps({
+        "isValid": True,
+        "isIdle": False,
+        "queueId": "competitive",
+        "provisioningFlow": "Invalid",
+        "partyId": "00000000-0000-0000-0000-000000000000",
+        "partySize": 1,
+        "maxPartySize": 5,
+        "partyOwnerMatchScoreAllyTeam": 0,
+        "partyOwnerMatchScoreEnemyTeam": 0,
+        "premierPresenceData": {
+            "rosterId": "",
+            "rosterName": "ValScanner is active. Ignore any version mismatch warnings.",
+            "rosterTag": "ValScanner Active",
+            "rosterType": "VCT",
+            "division": 0,
+            "score": 0,
+            "plating": 0,
+            "showAura": False,
+            "showTag": True,
+            "showPlating": False,
+        },
+        "matchPresenceData": {
+            "sessionLoopState": "MENUS",
+            "provisioningFlow": "Invalid",
+            "matchMap": "",
+            "queueId": "competitive",
+        },
         "partyPresenceData": {
             "partyId": "00000000-0000-0000-0000-000000000000",
+            "isPartyOwner": True,
             "partyClientVersion": safe_version,
             "partyState": "DEFAULT",
+            "partyAccessibility": "CLOSED",
+            "partyLFM": False,
+            "partyVersion": 1768830115681,
+            "partySize": 1,
             "partyOwnerSessionLoopState": "MENUS",
+            "isPartyCrossPlayEnabled": False,
+            "isPlayerCrossPlayEnabled": False,
+            "partyPrecisePlatformTypes": 1,
+            "customGameName": "ValScanner Active",
+            "customGameTeam": "",
+            "maxPartySize": 5,
+            "tournamentId": "",
+            "rosterId": "",
+            "partyOwnerMatchMap": "",
+            "partyOwnerProvisioningFlow": "Invalid",
+            "partyOwnerMatchScoreAllyTeam": 0,
+            "partyOwnerMatchScoreEnemyTeam": 0,
             "queueEntryTime": "0001.01.01-00.00.00",
         },
         "playerPresenceData": {
-            "accountLevel": 1,
+            "playerCardId": "893deca1-4123-9c1f-2985-aa9de74cb512",
+            "playerTitleId": "e3ca05a4-4e44-9afe-3791-7d96ca8f71fa",
+            "accountLevel": 999,
             "competitiveTier": 0,
+            "leaderboardPosition": 0,
         },
-        "sessionLoopState": "MENUS",
-        "queueId": "",
     }).encode("utf-8")).decode("utf-8")
 
     return (
-        f"<presence from='{FAKE_PLAYER_JID}/{FAKE_PLAYER_RESOURCE}' id='valscanner-fake-presence'>"
+        f"<presence from='{fake_player_jid}/{FAKE_PLAYER_RESOURCE}' id='valscanner-fake-presence'>"
         "<games>"
         f"<keystone><st>chat</st><s.t>{unix_time_milliseconds}</s.t><s.p>keystone</s.p><pty/></keystone>"
+        f"<league_of_legends><st>chat</st><s.t>{unix_time_milliseconds}</s.t><s.p>league_of_legends</s.p><s.c>live</s.c><p>{{&quot;pty&quot;:true}}</p></league_of_legends>"
         f"<valorant><st>chat</st><s.t>{unix_time_milliseconds}</s.t><s.p>valorant</s.p><s.r>PC</s.r><p>{encoded_valorant_presence}</p><pty/></valorant>"
+        f"<bacon><st>chat</st><s.t>{unix_time_milliseconds}</s.t><s.l>bacon_availability_online</s.l><s.p>bacon</s.p></bacon>"
         "</games>"
         "<show>chat</show>"
         "<platform>riot</platform>"
@@ -322,6 +410,7 @@ class XmppMITM:
         self._outgoing_buffers = {}
         self._fake_player_inserted = set()
         self._fake_player_visible = set()
+        self._xmpp_domains = {}
         self._shutting_down = False
         self._presence_mode = normalize_presence_mode(None)
         self._last_presence_stanza = ""
@@ -372,6 +461,7 @@ class XmppMITM:
         self._outgoing_buffers.clear()
         self._fake_player_inserted.clear()
         self._fake_player_visible.clear()
+        self._xmpp_domains.clear()
 
     def get_presence_mode(self):
         return self._presence_mode
@@ -483,6 +573,7 @@ class XmppMITM:
         self._outgoing_buffers.pop(current_socket_id, None)
         self._fake_player_inserted.discard(current_socket_id)
         self._fake_player_visible.discard(current_socket_id)
+        self._xmpp_domains.pop(current_socket_id, None)
         self._socket_tasks.pop(current_socket_id, None)
         self._socket_writers.pop(current_socket_id, None)
         await self._close_socket_pair(client_writer, riot_writer)
@@ -500,39 +591,84 @@ class XmppMITM:
             while True:
                 data = await reader.read(4096)
                 if not data:
-                    if direction == "outgoing":
-                        flushed = self.flush_buffered_text(socket_id, direction)
-                        if flushed:
-                            await self._write_text_fragments(writer, flushed)
-                            await self._safe_log_message(json.dumps({
-                                "type": direction,
-                                "time": datetime.now().timestamp(),
-                                "data": "".join(flushed),
-                                "socketID": socket_id,
-                            }))
+                    flushed = self.flush_buffered_text(socket_id, direction)
+                    if flushed:
+                        await self._write_text_fragments(writer, flushed)
+                        await self._safe_log_message(json.dumps({
+                            "type": direction,
+                            "time": datetime.now().timestamp(),
+                            "data": "".join(flushed),
+                            "socketID": socket_id,
+                        }))
+                    self._signal_stream_end(writer, socket_id, direction)
+                    break
+
+                if direction == "outgoing" and _looks_like_tls_record(data):
+                    await self._safe_log_message(json.dumps({
+                        "type": "xmpp-unexpected-tls-record",
+                        "time": datetime.now().timestamp(),
+                        "socketID": socket_id,
+                        "bytes": len(data),
+                    }))
+                    print(f"[XMPPMitm] socket={socket_id} unexpected TLS record inside XMPP stream")
                     self._signal_stream_end(writer, socket_id, direction)
                     break
 
                 decoded_text = data.decode(errors="ignore")
                 if direction == "incoming":
-                    writer.write(data)
-                    await writer.drain()
+                    self._observe_xmpp_domain(socket_id, decoded_text)
                     self._observe_incoming_text(socket_id, decoded_text)
+                    should_rewrite = (
+                        self._presence_mode == PRESENCE_MODE_OFFLINE
+                        and (
+                            "jabber:iq:riotgames:roster" in decoded_text
+                            or self._incoming_buffers.get(socket_id)
+                        )
+                    )
+                    if should_rewrite:
+                        fragments = self.process_buffered_text(socket_id, decoded_text, direction)
+                        if fragments:
+                            await self._write_text_fragments(writer, fragments)
+                    else:
+                        writer.write(data)
+                        await writer.drain()
+                        fragments = None
                     await self._safe_log_message(json.dumps({
                         "type": direction,
                         "time": datetime.now().timestamp(),
-                        "data": decoded_text,
+                        "data": "".join(fragments) if fragments else decoded_text,
                         "socketID": socket_id,
                     }))
                     continue
 
-                fragments = self.process_buffered_text(socket_id, decoded_text, direction)
+                self._observe_xmpp_domain(socket_id, decoded_text)
+                should_rewrite = (
+                    "<presence" in decoded_text
+                    or FAKE_PLAYER_PUUID in decoded_text
+                    or FAKE_PLAYER_JID in decoded_text
+                    or self._outgoing_buffers.get(socket_id)
+                )
+                if should_rewrite:
+                    fragments = self.process_buffered_text(socket_id, decoded_text, direction)
+                    if fragments:
+                        await self._write_text_fragments(writer, fragments)
+                else:
+                    writer.write(data)
+                    await writer.drain()
+                    fragments = None
+
                 if fragments:
-                    await self._write_text_fragments(writer, fragments)
                     await self._safe_log_message(json.dumps({
                         "type": direction,
                         "time": datetime.now().timestamp(),
                         "data": "".join(fragments),
+                        "socketID": socket_id,
+                    }))
+                else:
+                    await self._safe_log_message(json.dumps({
+                        "type": direction,
+                        "time": datetime.now().timestamp(),
+                        "data": decoded_text,
                         "socketID": socket_id,
                     }))
         except asyncio.CancelledError:
@@ -589,7 +725,29 @@ class XmppMITM:
         return self._apply_presence_mode(fragment, cache_original=True)
 
     def _rewrite_incoming_fragment(self, socket_id: int, fragment: str):
+        if self._presence_mode == PRESENCE_MODE_OFFLINE:
+            fake_player_jid = self._fake_player_jid_for_socket(socket_id)
+            rewritten = _inject_fake_player_into_roster(fragment, jid=fake_player_jid)
+            if rewritten != fragment:
+                self._fake_player_inserted.add(socket_id)
+                payloads = [rewritten]
+                if socket_id not in self._fake_player_visible:
+                    payloads.append(_build_fake_player_presence(
+                        version=self._valorant_version,
+                        available=True,
+                        jid=fake_player_jid,
+                    ))
+                    self._fake_player_visible.add(socket_id)
+                return "".join(payloads)
         return fragment
+
+    def _observe_xmpp_domain(self, socket_id: int, text: str):
+        domain = _extract_xmpp_domain(text)
+        if domain:
+            self._xmpp_domains[socket_id] = domain
+
+    def _fake_player_jid_for_socket(self, socket_id: int):
+        return _build_fake_player_jid(self._xmpp_domains.get(socket_id))
 
     def _observe_incoming_text(self, socket_id: int, text: str):
         if not text:
@@ -650,15 +808,24 @@ class XmppMITM:
                 continue
 
             payloads = []
+            fake_player_jid = self._fake_player_jid_for_socket(socket_id)
             if self._presence_mode == PRESENCE_MODE_OFFLINE:
                 if socket_id not in self._fake_player_visible:
-                    payloads.append(_build_fake_roster_push(remove=False))
+                    payloads.append(_build_fake_roster_push(remove=False, jid=fake_player_jid))
                     self._fake_player_visible.add(socket_id)
-                payloads.append(_build_fake_player_presence(version=self._valorant_version, available=True))
+                payloads.append(_build_fake_player_presence(
+                    version=self._valorant_version,
+                    available=True,
+                    jid=fake_player_jid,
+                ))
             else:
                 if socket_id in self._fake_player_visible:
-                    payloads.append(_build_fake_player_presence(version=self._valorant_version, available=False))
-                    payloads.append(_build_fake_roster_push(remove=True))
+                    payloads.append(_build_fake_player_presence(
+                        version=self._valorant_version,
+                        available=False,
+                        jid=fake_player_jid,
+                    ))
+                    payloads.append(_build_fake_roster_push(remove=True, jid=fake_player_jid))
                     self._fake_player_visible.discard(socket_id)
 
             if not payloads:
