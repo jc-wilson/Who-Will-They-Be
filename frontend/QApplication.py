@@ -72,7 +72,7 @@ from core.asset_loader import (
     load_buddy_pixmap,
 )
 
-CURRENT_VERSION = "1.12.2"
+CURRENT_VERSION = "1.12.3"
 UPDATE_CHECK_URL = "https://ValScanner.com/version.json"
 WEBSITE_URL = "https://ValScanner.com/"
 APP_INSTANCE_KEY = "ValScanner.SingleInstance"
