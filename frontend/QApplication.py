@@ -99,24 +99,26 @@ MAP_DISPLAY_NAMES = {
     "de28aa9b-4cbe-1003-320e-6cb3ec309557": "Glitch",
     "e2ad5c54-4114-a870-9641-8ea21279579a": "Icebox",
     "fd267378-4d1d-484f-ff52-77821ed10dc2": "Pearl",
+    "756da597-416b-c0f2-f47b-afbdf28670bc": "Summit"
 }
 # Edit these lists to move maps between popup sections.
 MAP_SECTION_MAPS = {
     "Competitive": [
-        "b529448b-4d60-346e-e89e-00a4c527a405",
         "2fe4ed3a-450a-948b-6d6b-e89a78e680a9",
         "2bee0dc9-4ffe-519b-1cbd-7fbe763a6047",
-        "2c9d57ec-4431-9c5e-2939-8f9ef6dd5cba",
         "2fb9a4fd-47b8-4e7d-a969-74b4046ebd53",
         "d960549e-485c-e861-8d71-aa9d1aed12a2",
-        "fd267378-4d1d-484f-ff52-77821ed10dc2",
+        "756da597-416b-c0f2-f47b-afbdf28670bc",
+        "92584fbe-486a-b1b2-9faa-39b0f486b498",
+        "7eaecc1b-4337-bbf6-6ab9-04b8f06b3319"
     ],
     "Standard": [
         "224b0a95-48b9-f703-1bd8-67aca101a61f",
-        "7eaecc1b-4337-bbf6-6ab9-04b8f06b3319",
-        "92584fbe-486a-b1b2-9faa-39b0f486b498",
+        "fd267378-4d1d-484f-ff52-77821ed10dc2",
+        "2c9d57ec-4431-9c5e-2939-8f9ef6dd5cba",
         "1c18ab1f-420d-0d8b-71d0-77ad3c439115",
         "e2ad5c54-4114-a870-9641-8ea21279579a",
+        "b529448b-4d60-346e-e89e-00a4c527a405"
     ],
     "Team Deathmatch": [
         "2c09d728-42d5-30d8-43dc-96a05cc7ee9d",
@@ -263,8 +265,8 @@ THEME_DEFINITIONS = {
         "flagged_row_hover": "#2b4caf",
         "flagged_border": "#ffd36b",
     },
-    "bailey": {
-        "label": "Bailey",
+    "sage": {
+        "label": "Sage",
         "swatch_a": "#7ea67f",
         "swatch_b": "#c79a4b",
         "main": "#507153",
@@ -445,7 +447,7 @@ LIGHT_LOCK_AGENT_TEXT_THEMES = {
     "midnight",
     "sandstorm",
     "amethyst",
-    "bailey",
+    "sage",
     "glacier",
     "liquidglass",
 }
