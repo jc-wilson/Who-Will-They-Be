@@ -75,6 +75,7 @@ from core.player_icons import (
 )
 from core.frontend_state import FrontendWindowState
 from core.player_display import PlayerDisplayFormatter
+from core.player_card_display import SPECIAL_BUDDY_UUID, build_player_card_display
 from core.valorant_api_cache import refresh_valorant_api_jsons
 from core.asset_loader import (
     ensure_skin_asset_files,
@@ -83,14 +84,15 @@ from core.asset_loader import (
     load_buddy_pixmap,
 )
 try:
-    from frontend.qml_bridge import QmlProbeBridge, ThemePopupBridge
+    from frontend.qml_bridge import PlayerCardBridge, QmlProbeBridge, ThemePopupBridge
 except ModuleNotFoundError:
-    from qml_bridge import QmlProbeBridge, ThemePopupBridge
+    from qml_bridge import PlayerCardBridge, QmlProbeBridge, ThemePopupBridge
 
 CURRENT_VERSION = "1.12.4"
 UPDATE_CHECK_URL = "https://ValScanner.com/version.json"
 WEBSITE_URL = "https://ValScanner.com/"
 APP_INSTANCE_KEY = "ValScanner.SingleInstance"
+PLAYER_ROW_RENDERER_ENV = "VALSCANNER_PLAYER_ROW_RENDERER"
 CLOSE_ICON_NAME = "fa6s.xmark"
 REFRESH_ICON_NAME = "fa6s.arrows-rotate"
 OFFLINE_ICON_NAME = "fa6s.user-slash"
@@ -491,7 +493,6 @@ THEME_FLAGGED_BORDER = ""
 ACTIVE_THEME_STYLE_PROFILE = dict(DEFAULT_THEME_STYLE_PROFILE)
 ACTIVE_THEME_SURFACE_MODE = DEFAULT_THEME_SURFACE_MODE
 INITIAL_ASSET_GROUPS = ("agents", "ranks", "maps")
-SPECIAL_BUDDY_UUID = "a57aa3d0-4ad0-b06a-6c54-338cb3ea6b41"
 BACKGROUND_PIXMAP_CACHE = {}
 BACKGROUND_DITHER_PIXMAP = None
 
@@ -3626,8 +3627,19 @@ class ValorantStatsWindow(QMainWindow):
         self.current_theme_surface_mode = initial_theme_surface_mode
         self.current_theme_name = apply_theme_palette(initial_theme_name, initial_theme_surface_mode)
         self.window_state.current_theme_name = self.current_theme_name
+        self.player_row_renderer = self.resolve_player_row_renderer()
+        self._qml_player_rows_available = self.player_row_renderer == "qml"
         self.qml_bridge = QmlProbeBridge(self.window_state, self)
         self.qml_bridge.refreshRequested.connect(self.run_valo_stats)
+        self.player_card_bridge = PlayerCardBridge(
+            self.window_state,
+            formatter=self.player_formatter,
+            resource_path_resolver=resource_path,
+            style_colors=self.build_player_card_style_colors(),
+            loadout_callback=self.open_qml_player_loadout,
+            flag_callback=self.flag_player_by_puuid,
+            parent=self,
+        )
         initial_presence_mode = self.window_state.presence_mode
         initial_agent = str(persisted_state.get("selected_standard_agent", "Random") or "Random")
         initial_auto_lock_enabled = bool(persisted_state.get("auto_lock_enabled", False))
@@ -3842,12 +3854,14 @@ class ValorantStatsWindow(QMainWindow):
         team_columns_layout.addWidget(divider_container)
         team_columns_layout.addWidget(right_panel, 1)
         self.qml_probe_widget = self.create_qml_probe_widget()
+        self.qml_player_card_widget = self.create_qml_player_card_widget()
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(header_frame)
         layout.addWidget(self.qml_probe_widget)
+        layout.addWidget(self.qml_player_card_widget)
         layout.addWidget(team_columns, 1)
 
         container = QWidget()
@@ -3951,6 +3965,32 @@ class ValorantStatsWindow(QMainWindow):
         widget.setVisible(os.environ.get("VALSCANNER_QML_PROBE") == "1")
         return widget
 
+    def build_player_card_style_colors(self):
+        return {
+            "main": THEME_MAIN,
+            "window": THEME_WINDOW,
+            "panel": THEME_PANEL,
+            "card": THEME_CARD,
+            "cardAlt": THEME_CARD_ALT,
+            "border": THEME_BORDER,
+            "borderSoft": THEME_BORDER_SOFT,
+            "text": THEME_TEXT,
+            "muted": THEME_MUTED,
+            "accent": THEME_ACCENT,
+            "accentHover": THEME_ACCENT_HOVER,
+            "accentPressed": THEME_ACCENT_PRESSED,
+            "teal": THEME_TEAL,
+            "tealHover": THEME_TEAL_HOVER,
+            "red": THEME_RED,
+            "redHover": THEME_RED_HOVER,
+            "redPressed": THEME_RED_PRESSED,
+            "gold": THEME_GOLD,
+            "cyan": THEME_CYAN,
+            "flaggedRow": THEME_FLAGGED_ROW,
+            "flaggedRowHover": THEME_FLAGGED_ROW_HOVER,
+            "flaggedBorder": THEME_FLAGGED_BORDER,
+        }
+
     def log_qml_probe_errors(self, widget, status):
         error_status = getattr(getattr(QQuickWidget, "Status", QQuickWidget), "Error")
         if status != error_status:
@@ -3958,10 +3998,137 @@ class ValorantStatsWindow(QMainWindow):
         for error in widget.errors():
             print(f"[QML Probe] {error.toString()}")
 
+    def create_qml_player_card_widget(self):
+        widget = QQuickWidget(self)
+        widget.setObjectName("qmlPlayerCardPrototypeWidget")
+        resize_mode = getattr(getattr(QQuickWidget, "ResizeMode", QQuickWidget), "SizeRootObjectToView")
+        widget.setResizeMode(resize_mode)
+        widget.setFixedHeight(self.MIN_PLAYER_ROW_HEIGHT)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        widget.setClearColor(QColor(0, 0, 0, 0))
+        widget.rootContext().setContextProperty("playerCardBridge", self.player_card_bridge)
+        widget.statusChanged.connect(lambda status: self.log_qml_player_card_errors(widget, status))
+
+        qml_path = resource_path(os.path.join("frontend", "qml", "PlayerCardPrototype.qml"))
+        widget.setSource(QUrl.fromLocalFile(qml_path))
+        self.log_qml_player_card_errors(widget, widget.status())
+        widget.setVisible(os.environ.get("VALSCANNER_QML_PLAYER_CARD") == "1")
+        return widget
+
+    def resolve_player_row_renderer(self):
+        raw_value = str(os.environ.get(PLAYER_ROW_RENDERER_ENV, "qml") or "qml").strip().lower()
+        if raw_value in {"widget", "qwidget", "qt", "0", "false", "off"}:
+            return "widget"
+        if raw_value not in {"qml", "quick", "1", "true", "on"}:
+            print(f"[PlayerRows] Unknown {PLAYER_ROW_RENDERER_ENV}={raw_value!r}; defaulting to QML rows")
+        return "qml"
+
+    def use_qml_player_rows(self):
+        return self.player_row_renderer == "qml" and self._qml_player_rows_available
+
+    def create_qml_player_row(self, player):
+        row = QFrame()
+        row.setObjectName("qmlPlayerCardRow")
+        row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row.setMinimumHeight(self.MIN_PLAYER_ROW_HEIGHT)
+
+        row_layout = QVBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(0)
+
+        widget = QQuickWidget(row)
+        widget.setObjectName("qmlPlayerCardRowWidget")
+        resize_mode = getattr(getattr(QQuickWidget, "ResizeMode", QQuickWidget), "SizeRootObjectToView")
+        widget.setResizeMode(resize_mode)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        widget.setClearColor(QColor(0, 0, 0, 0))
+        widget.rootContext().setContextProperty("playerCardBridge", self.player_card_bridge)
+        widget.rootContext().setContextProperty(
+            "playerCardData",
+            build_player_card_display(
+                player,
+                formatter=self.player_formatter,
+                flagged_players=self.flagged_players,
+                resource_path_resolver=resource_path,
+            ),
+        )
+        widget.statusChanged.connect(
+            lambda status, quick_widget=widget: self.handle_qml_player_row_status(quick_widget, status)
+        )
+
+        qml_path = resource_path(os.path.join("frontend", "qml", "PlayerCardRow.qml"))
+        widget.setSource(QUrl.fromLocalFile(qml_path))
+        if self.qml_player_row_has_errors(widget, widget.status()):
+            self._qml_player_rows_available = False
+            return self.create_player_row(player)
+
+        row_layout.addWidget(widget)
+        return row
+
+    def qml_player_row_has_errors(self, widget, status):
+        error_status = getattr(getattr(QQuickWidget, "Status", QQuickWidget), "Error")
+        if status != error_status:
+            return False
+
+        errors = widget.errors() or []
+        if not errors:
+            print("[QML PlayerCard Row] Unknown QML load error; falling back to QWidget rows")
+            return True
+
+        for error in errors:
+            print(f"[QML PlayerCard Row] {error.toString()}")
+        print("[QML PlayerCard Row] Falling back to QWidget rows")
+        return True
+
+    def handle_qml_player_row_status(self, widget, status):
+        if not self.qml_player_row_has_errors(widget, status):
+            return
+        self._qml_player_rows_available = False
+        if self.player_row_renderer == "qml":
+            QTimer.singleShot(0, lambda: self.load_players(getattr(self.valo_rank, "frontend_data", None) or {}))
+
+    def create_player_row_for_renderer(self, player):
+        if self.use_qml_player_rows():
+            return self.create_qml_player_row(player)
+        return self.create_player_row(player)
+
+    def log_qml_player_card_errors(self, widget, status):
+        error_status = getattr(getattr(QQuickWidget, "Status", QQuickWidget), "Error")
+        if status != error_status:
+            return
+        errors = widget.errors() or []
+        if not errors:
+            print("[QML PlayerCard Prototype] Unknown QML load error")
+            return
+        for error in errors:
+            print(f"[QML PlayerCard Prototype] {error.toString()}")
+
+    def open_qml_player_loadout(self, player_key):
+        player_key = str(player_key or "").strip()
+        if not player_key:
+            return
+
+        for player in list(getattr(self.window_state, "left_players", []) or []) + list(getattr(self.window_state, "right_players", []) or []):
+            if not isinstance(player, dict):
+                continue
+            player_puuid = str(player.get("puuid", "") or "").strip()
+            clipboard_name = self.build_player_clipboard_name(player)
+            if player_key not in (player_puuid, clipboard_name):
+                continue
+
+            skins = player.get("skins") or {}
+            if skins:
+                self.open_skin_popup(str(player.get("name", "Unknown")), skins)
+            return
+
     def notify_qml_probe_bindings(self):
         bridge = getattr(self, "qml_bridge", None)
         if bridge is not None:
             bridge.notify_bindings()
+        player_card_bridge = getattr(self, "player_card_bridge", None)
+        if player_card_bridge is not None:
+            player_card_bridge.set_style_colors(self.build_player_card_style_colors())
+            player_card_bridge.refresh()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -6784,7 +6951,7 @@ class ValorantStatsWindow(QMainWindow):
             return
 
         for player in players:
-            layout.addWidget(self.create_player_row(player))
+            layout.addWidget(self.create_player_row_for_renderer(player))
         layout.addStretch(1)
         self.update_team_row_heights(scroll_area, layout)
 
