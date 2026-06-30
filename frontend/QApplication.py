@@ -28,6 +28,7 @@ from PySide6.QtGui import (
     QRadialGradient,
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from PySide6.QtQuickWidgets import QQuickWidget
 import sys
 import os
 import random
@@ -81,6 +82,10 @@ from core.asset_loader import (
     load_skin_pixmap,
     load_buddy_pixmap,
 )
+try:
+    from frontend.qml_bridge import QmlProbeBridge
+except ModuleNotFoundError:
+    from qml_bridge import QmlProbeBridge
 
 CURRENT_VERSION = "1.12.4"
 UPDATE_CHECK_URL = "https://ValScanner.com/version.json"
@@ -3509,6 +3514,8 @@ class ValorantStatsWindow(QMainWindow):
         self.current_theme_surface_mode = initial_theme_surface_mode
         self.current_theme_name = apply_theme_palette(initial_theme_name, initial_theme_surface_mode)
         self.window_state.current_theme_name = self.current_theme_name
+        self.qml_bridge = QmlProbeBridge(self.window_state, self)
+        self.qml_bridge.refreshRequested.connect(self.run_valo_stats)
         initial_presence_mode = self.window_state.presence_mode
         initial_agent = str(persisted_state.get("selected_standard_agent", "Random") or "Random")
         initial_auto_lock_enabled = bool(persisted_state.get("auto_lock_enabled", False))
@@ -3722,11 +3729,13 @@ class ValorantStatsWindow(QMainWindow):
         team_columns_layout.addWidget(left_panel, 1)
         team_columns_layout.addWidget(divider_container)
         team_columns_layout.addWidget(right_panel, 1)
+        self.qml_probe_widget = self.create_qml_probe_widget()
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(header_frame)
+        layout.addWidget(self.qml_probe_widget)
         layout.addWidget(team_columns, 1)
 
         container = QWidget()
@@ -3812,6 +3821,35 @@ class ValorantStatsWindow(QMainWindow):
         self.apply_restored_queue_snipe_state(initial_queue_snipe_enabled, initial_queue_snipe_friend)
         self.apply_restored_presence_mode(initial_presence_mode)
         self._suspend_agent_lock_state_save = False
+
+    def create_qml_probe_widget(self):
+        widget = QQuickWidget(self)
+        widget.setObjectName("qmlProbeWidget")
+        resize_mode = getattr(getattr(QQuickWidget, "ResizeMode", QQuickWidget), "SizeRootObjectToView")
+        widget.setResizeMode(resize_mode)
+        widget.setFixedHeight(132)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        widget.setClearColor(QColor(0, 0, 0, 0))
+        widget.rootContext().setContextProperty("bridge", self.qml_bridge)
+        widget.statusChanged.connect(lambda status: self.log_qml_probe_errors(widget, status))
+
+        qml_path = resource_path(os.path.join("frontend", "qml", "QmlProbe.qml"))
+        widget.setSource(QUrl.fromLocalFile(qml_path))
+        self.log_qml_probe_errors(widget, widget.status())
+        widget.setVisible(os.environ.get("VALSCANNER_QML_PROBE") == "1")
+        return widget
+
+    def log_qml_probe_errors(self, widget, status):
+        error_status = getattr(getattr(QQuickWidget, "Status", QQuickWidget), "Error")
+        if status != error_status:
+            return
+        for error in widget.errors():
+            print(f"[QML Probe] {error.toString()}")
+
+    def notify_qml_probe_bindings(self):
+        bridge = getattr(self, "qml_bridge", None)
+        if bridge is not None:
+            bridge.notify_bindings()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -4628,7 +4666,10 @@ class ValorantStatsWindow(QMainWindow):
         )
         self.current_theme_surface_mode = normalized_surface_mode
         self.current_theme_name = apply_theme_palette(normalized_theme_name, normalized_surface_mode)
+        self.window_state.current_theme_name = self.current_theme_name
+        self.window_state.current_theme_surface_mode = self.current_theme_surface_mode
         self.apply_theme()
+        self.notify_qml_probe_bindings()
 
         tooltip_popup = InstantTooltipMixin._tooltip_popup
         if tooltip_popup is not None:
@@ -6590,12 +6631,14 @@ class ValorantStatsWindow(QMainWindow):
             self.populate_team_layout(self.left_scroll_area, self.left_layout, [])
             self.populate_team_layout(self.right_scroll_area, self.right_layout, [])
             self.update_metadata()
+            self.notify_qml_probe_bindings()
             QTimer.singleShot(0, self.schedule_remote_player_icons_load)
             return
 
         self.populate_team_layout(self.left_scroll_area, self.left_layout, self.left_players)
         self.populate_team_layout(self.right_scroll_area, self.right_layout, self.right_players)
         self.update_metadata()
+        self.notify_qml_probe_bindings()
         QTimer.singleShot(0, self.refresh_player_row_heights)
         QTimer.singleShot(0, self.schedule_remote_player_icons_load)
 
