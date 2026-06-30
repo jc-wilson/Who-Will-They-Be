@@ -5,10 +5,12 @@ import tempfile
 
 from core.presence_mode import DEFAULT_PRESENCE_MODE, normalize_presence_mode
 
-APP_STATE_VERSION = 5
+APP_STATE_VERSION = 6
 APP_STATE_RELATIVE_PATH = os.path.join("agent_selection", "app_state.json")
 LEGACY_MAP_SELECTION_RELATIVE_PATH = os.path.join("agent_selection", "map_agent_selection.json")
 DEFAULT_THEME_NAME = "midnight"
+DEFAULT_THEME_SURFACE_MODE = "transparent"
+VALID_THEME_SURFACE_MODES = {"transparent", "opaque"}
 VALID_THEME_NAMES = {
     "midnight",
     "sandstorm",
@@ -61,6 +63,7 @@ def default_app_state(map_uuids=None, base_path=None):
     return {
         "version": APP_STATE_VERSION,
         "selected_theme": DEFAULT_THEME_NAME,
+        "theme_surface_mode": DEFAULT_THEME_SURFACE_MODE,
         "presence_mode": DEFAULT_PRESENCE_MODE,
         "selected_standard_agent": "Random",
         "auto_lock_enabled": False,
@@ -102,6 +105,13 @@ def _normalize_selected_theme(theme_name):
     if normalized_theme in VALID_THEME_NAMES:
         return normalized_theme
     return DEFAULT_THEME_NAME
+
+
+def normalize_theme_surface_mode(surface_mode):
+    normalized_mode = str(surface_mode or DEFAULT_THEME_SURFACE_MODE).strip().lower()
+    if normalized_mode in VALID_THEME_SURFACE_MODES:
+        return normalized_mode
+    return DEFAULT_THEME_SURFACE_MODE
 
 
 def _normalize_queue_snipe_friend(friend_data):
@@ -210,6 +220,7 @@ def normalize_app_state(state_data, map_uuids=None, base_path=None):
     normalized_state = {
         "version": APP_STATE_VERSION,
         "selected_theme": _normalize_selected_theme(raw_state.get("selected_theme")),
+        "theme_surface_mode": normalize_theme_surface_mode(raw_state.get("theme_surface_mode")),
         "presence_mode": normalize_presence_mode(raw_state.get("presence_mode")),
         "selected_standard_agent": str(raw_state.get("selected_standard_agent", "Random") or "Random"),
         "auto_lock_enabled": bool(raw_state.get("auto_lock_enabled", False)),
