@@ -1,5 +1,4 @@
 ﻿from html import escape
-from urllib.parse import quote
 import math
 import time
 
@@ -43,7 +42,6 @@ import json
 import requests
 from superqt import QToggleSwitch as SuperQtToggleSwitch
 from core.app_state import (
-    APP_STATE_VERSION,
     DEFAULT_THEME_SURFACE_MODE,
     load_app_state,
     normalize_theme_surface_mode,
@@ -74,6 +72,8 @@ from core.player_icons import (
     PLAYER_ICON_TIMEOUT_SECONDS,
     normalize_player_icon_rules,
 )
+from core.frontend_state import FrontendWindowState
+from core.player_display import PlayerDisplayFormatter
 from core.valorant_api_cache import refresh_valorant_api_jsons
 from core.asset_loader import (
     ensure_skin_asset_files,
@@ -3502,16 +3502,19 @@ class ValorantStatsWindow(QMainWindow):
 
         self.map_asset_uuids = discover_map_asset_uuids()
         persisted_state = load_app_state(map_uuids=self.map_asset_uuids)
+        self.window_state = FrontendWindowState(persisted_state)
+        self.player_formatter = PlayerDisplayFormatter(self.window_state.flagged_players)
         initial_theme_name = normalize_theme_name(persisted_state.get("selected_theme"))
-        initial_theme_surface_mode = normalize_theme_surface_mode(persisted_state.get("theme_surface_mode"))
+        initial_theme_surface_mode = self.window_state.current_theme_surface_mode
         self.current_theme_surface_mode = initial_theme_surface_mode
         self.current_theme_name = apply_theme_palette(initial_theme_name, initial_theme_surface_mode)
-        initial_presence_mode = PRESENCE_MODE_ONLINE
+        self.window_state.current_theme_name = self.current_theme_name
+        initial_presence_mode = self.window_state.presence_mode
         initial_agent = str(persisted_state.get("selected_standard_agent", "Random") or "Random")
         initial_auto_lock_enabled = bool(persisted_state.get("auto_lock_enabled", False))
         initial_map_lock_enabled = bool(persisted_state.get("map_lock_enabled", False))
-        initial_queue_snipe_enabled = False
-        initial_queue_snipe_friend = None
+        initial_queue_snipe_enabled = bool(persisted_state.get("queue_snipe_enabled", False))
+        initial_queue_snipe_friend = self.window_state.queue_snipe_selected_friend
         self.presence_mode = initial_presence_mode
         self._suspend_agent_lock_state_save = True
 
@@ -3653,9 +3656,9 @@ class ValorantStatsWindow(QMainWindow):
         self.player_icon_pixmaps = {}
         self._player_icons_state = "not_started"
         self._player_icons_task = None
-        self.map_agent_selection = dict(persisted_state.get("map_agent_selection", {}))
-        self.flagged_players = dict(persisted_state.get("flagged_players", {}))
-        self.co_play_history = dict(persisted_state.get("co_play_history", {"by_user": {}}))
+        self.map_agent_selection = self.window_state.map_agent_selection
+        self.flagged_players = self.window_state.flagged_players
+        self.co_play_history = self.window_state.co_play_history
         self.last_standard_agent_text = initial_agent
         self.last_standard_agent_value = self.resolve_standard_agent_value(initial_agent)
 
@@ -3789,18 +3792,18 @@ class ValorantStatsWindow(QMainWindow):
             self,
         )
 
-        self.refreshed_pregame = None
-        self.refreshed_game = None
-        self.instalocked_match_id = None
-        self.last_update = None
+        self.refreshed_pregame = self.window_state.refreshed_pregame
+        self.refreshed_game = self.window_state.refreshed_game
+        self.instalocked_match_id = self.window_state.instalocked_match_id
+        self.last_update = self.window_state.last_update
         self._refresh_task = None
         self._hydration_task = None
-        self._hydration_match_id = None
-        self._hydrated_match_ids = set()
+        self._hydration_match_id = self.window_state.hydration_match_id
+        self._hydrated_match_ids = self.window_state.hydrated_match_ids
 
-        self.seen_prematch_ids = set()
-        self.seen_match_ids = set()
-        self.last_seen = None
+        self.seen_prematch_ids = self.window_state.seen_prematch_ids
+        self.seen_match_ids = self.window_state.seen_match_ids
+        self.last_seen = self.window_state.last_seen
 
         self._remote_policy_checked_puuids = set()
 
@@ -4270,23 +4273,19 @@ class ValorantStatsWindow(QMainWindow):
         )
 
     def build_agent_lock_state_payload(self):
-        return {
-            "version": APP_STATE_VERSION,
-            "selected_theme": self.current_theme_name,
-            "theme_surface_mode": self.current_theme_surface_mode,
-            "presence_mode": self.presence_mode,
-            "selected_standard_agent": self.last_standard_agent_text or "Random",
-            "auto_lock_enabled": self.auto_lock_switch.isChecked(),
-            "map_lock_enabled": self.map_lock_switch.isChecked(),
-            "queue_snipe_enabled": self.queue_snipe_switch.isChecked() and self.queue_snipe_selected_friend is not None,
-            "queue_snipe_selected_friend": dict(self.queue_snipe_selected_friend) if self.queue_snipe_selected_friend else None,
-            "flagged_players": {
-                str(puuid): dict(details) if isinstance(details, dict) else details
-                for puuid, details in self.flagged_players.items()
-            },
-            "co_play_history": dict(self.co_play_history or {"by_user": {}}),
-            "map_agent_selection": dict(self.map_agent_selection or {}),
-        }
+        return self.window_state.build_saved_payload(
+            selected_theme=self.current_theme_name,
+            theme_surface_mode=self.current_theme_surface_mode,
+            presence_mode=self.presence_mode,
+            selected_standard_agent=self.last_standard_agent_text or "Random",
+            auto_lock_enabled=self.auto_lock_switch.isChecked(),
+            map_lock_enabled=self.map_lock_switch.isChecked(),
+            queue_snipe_enabled=self.queue_snipe_switch.isChecked(),
+            queue_snipe_selected_friend=self.queue_snipe_selected_friend,
+            flagged_players=self.flagged_players,
+            co_play_history=self.co_play_history,
+            map_agent_selection=self.map_agent_selection,
+        )
 
     def persist_agent_lock_state(self):
         if getattr(self, "_suspend_agent_lock_state_save", False):
@@ -4296,15 +4295,15 @@ class ValorantStatsWindow(QMainWindow):
             self.build_agent_lock_state_payload(),
             map_uuids=self.map_asset_uuids,
         )
+        self.window_state.apply_normalized_saved_state(normalized_state)
         self.current_theme_name = normalize_theme_name(normalized_state.get("selected_theme"))
-        self.current_theme_surface_mode = normalize_theme_surface_mode(normalized_state.get("theme_surface_mode"))
-        self.presence_mode = normalize_presence_mode(normalized_state.get("presence_mode"))
-        self.map_agent_selection = dict(normalized_state.get("map_agent_selection", {}))
-        self.flagged_players = dict(normalized_state.get("flagged_players", {}))
-        self.co_play_history = dict(normalized_state.get("co_play_history", {"by_user": {}}))
-        self.queue_snipe_selected_friend = QueueSnipeService.normalize_friend(
-            normalized_state.get("queue_snipe_selected_friend")
-        )
+        self.current_theme_surface_mode = self.window_state.current_theme_surface_mode
+        self.presence_mode = self.window_state.presence_mode
+        self.map_agent_selection = self.window_state.map_agent_selection
+        self.flagged_players = self.window_state.flagged_players
+        self.player_formatter.set_flagged_players(self.flagged_players)
+        self.co_play_history = self.window_state.co_play_history
+        self.queue_snipe_selected_friend = self.window_state.queue_snipe_selected_friend
         if hasattr(self, "queue_snipe_button"):
             self.queue_snipe_button.setText(self.get_queue_snipe_button_text(self.queue_snipe_selected_friend))
         if hasattr(self, "presence_mode_switch"):
@@ -4333,7 +4332,7 @@ class ValorantStatsWindow(QMainWindow):
         self.on_map_lock_toggled(self.map_lock_switch.isChecked())
 
     def apply_restored_queue_snipe_state(self, queue_snipe_enabled, selected_friend):
-        self.queue_snipe_selected_friend = QueueSnipeService.normalize_friend(selected_friend)
+        self.queue_snipe_selected_friend = self.window_state.update_queue_snipe_friend(selected_friend)
         self.queue_snipe_button.setText(self.get_queue_snipe_button_text(self.queue_snipe_selected_friend))
         self.queue_snipe_switch.blockSignals(True)
         self.queue_snipe_switch.setChecked(bool(queue_snipe_enabled) and self.queue_snipe_selected_friend is not None)
@@ -4342,7 +4341,7 @@ class ValorantStatsWindow(QMainWindow):
         self.sync_party_detection_tool_states()
 
     def apply_restored_presence_mode(self, presence_mode):
-        self.presence_mode = normalize_presence_mode(presence_mode)
+        self.presence_mode = self.window_state.update_presence_mode(presence_mode)
         self.presence_mode_switch.blockSignals(True)
         self.presence_mode_switch.setChecked(self.presence_mode == PRESENCE_MODE_OFFLINE)
         self.presence_mode_switch.blockSignals(False)
@@ -4407,8 +4406,9 @@ class ValorantStatsWindow(QMainWindow):
         self.apply_theme_icons()
 
     def set_standard_agent_selection(self, agent_name):
-        self.last_standard_agent_text = agent_name
-        self.last_standard_agent_value = self.resolve_standard_agent_value(agent_name)
+        self.last_standard_agent_text, self.last_standard_agent_value = (
+            self.window_state.update_standard_agent_selection(agent_name, self.resolve_standard_agent_value)
+        )
         if agent_name not in MAP_SPECIFIC_ROLE_TOKENS:
             self.agent = self.last_standard_agent_value
 
@@ -4451,6 +4451,7 @@ class ValorantStatsWindow(QMainWindow):
 
     def save_map_agent_selection(self, map_uuid, selection_value):
         self.map_agent_selection[map_uuid] = str(selection_value or "")
+        self.window_state.map_agent_selection = self.map_agent_selection
         self.persist_agent_lock_state()
 
     def on_queue_snipe_toggled(self, checked):
@@ -4464,14 +4465,16 @@ class ValorantStatsWindow(QMainWindow):
         self.persist_agent_lock_state()
 
     def on_queue_snipe_friend_selected(self, friend_data):
-        self.queue_snipe_selected_friend = QueueSnipeService.normalize_friend(friend_data)
+        self.queue_snipe_selected_friend = self.window_state.update_queue_snipe_friend(friend_data)
         self.queue_snipe_button.setText(self.get_queue_snipe_button_text(self.queue_snipe_selected_friend))
         self.queue_snipe_service.set_selected_friend(self.queue_snipe_selected_friend)
         self.sync_party_detection_tool_states()
         self.persist_agent_lock_state()
 
     def on_presence_mode_toggled(self, checked):
-        self.presence_mode = PRESENCE_MODE_OFFLINE if checked else "online"
+        self.presence_mode = self.window_state.update_presence_mode(
+            PRESENCE_MODE_OFFLINE if checked else PRESENCE_MODE_ONLINE
+        )
         if hasattr(self, "startup_coordinator") and self.startup_coordinator:
             self.startup_coordinator.mitm_service.set_presence_mode(self.presence_mode)
         self.persist_agent_lock_state()
@@ -4800,7 +4803,7 @@ class ValorantStatsWindow(QMainWindow):
 
     @staticmethod
     def normalize_asset_id(asset_id):
-        return str(asset_id or "").strip().lower()
+        return PlayerDisplayFormatter.normalize_asset_id(asset_id)
 
     def _collect_loadout_cosmetic_ids(self, loadout_skins):
         skin_ids = set()
@@ -5050,11 +5053,7 @@ class ValorantStatsWindow(QMainWindow):
                 self.clear_layout(item.layout())
 
     def build_tracker_url(self, riot_id):
-        safe_text = quote(str(riot_id), safe="")
-        return (
-            "https://tracker.gg/valorant/profile/riot/"
-            f"{safe_text}"
-        )
+        return self.player_formatter.build_tracker_url(riot_id)
 
     def create_stat_widget(self, title, value):
         wrapper = QFrame()
@@ -5158,28 +5157,10 @@ class ValorantStatsWindow(QMainWindow):
         return button
 
     def extract_buddy_id_from_skin_data(self, skin_data):
-        buddy_id = None
-        if isinstance(skin_data, list):
-            buddy_id = skin_data[1] if len(skin_data) > 1 else None
-
-        if isinstance(buddy_id, dict):
-            return buddy_id.get("CharmID", buddy_id.get("CharmLevelID", ""))
-        if isinstance(buddy_id, list):
-            return buddy_id[0] if buddy_id else None
-        return buddy_id
+        return self.player_formatter.extract_buddy_id_from_skin_data(skin_data)
 
     def player_has_buddy_equipped(self, player, buddy_uuid):
-        target_buddy_id = self.normalize_asset_id(buddy_uuid)
-        if not target_buddy_id:
-            return False
-
-        for skin_data in (player.get("skins") or {}).values():
-            equipped_buddy_id = self.normalize_asset_id(
-                self.extract_buddy_id_from_skin_data(skin_data)
-            )
-            if equipped_buddy_id == target_buddy_id:
-                return True
-        return False
+        return self.player_formatter.player_has_buddy_equipped(player, buddy_uuid)
 
     def create_buddy_indicator(self, buddy_uuid, reference_button):
         buddy_pixmap = self.get_buddy_pixmap(buddy_uuid)
@@ -5329,27 +5310,13 @@ class ValorantStatsWindow(QMainWindow):
         return pixmap, str(rule.get("tooltip") or "Player icon")
 
     def player_is_flagged(self, player):
-        player_puuid = str(player.get("puuid", "") or "").strip()
-        return bool(player_puuid) and player_puuid in self.flagged_players
+        return self.player_formatter.player_is_flagged(player)
 
     def get_flag_tooltip_for_player(self, player):
-        player_puuid = str(player.get("puuid", "") or "").strip()
-        flagged_entry = self.flagged_players.get(player_puuid)
-        if isinstance(flagged_entry, dict):
-            reason_text = str(flagged_entry.get("reason", "") or "").strip()
-            if reason_text:
-                return reason_text
-            return "Flagged player"
-        return "Toggle flagged player"
+        return self.player_formatter.get_flag_tooltip_for_player(player)
 
     def build_player_clipboard_name(self, player):
-        game_name = str(player.get("game_name", "") or "").strip()
-        game_tag = str(player.get("tag", "") or player.get("game_tag", "") or "").strip()
-        display_name = str(player.get("name", "") or player.get("display_name", "") or "Unknown").strip()
-
-        if game_name and game_tag:
-            return f"{game_name}#{game_tag}"
-        return display_name or "Unknown"
+        return self.player_formatter.build_player_clipboard_name(player)
 
     def create_copy_name_indicator(self, player, target_height=18):
         copy_icon_path = resource_path(os.path.join("assets", "copy-regular.png"))
@@ -5666,7 +5633,7 @@ class ValorantStatsWindow(QMainWindow):
         else:
             rank_icon_label.setText(rank_name if rank_name not in ("[]", "") else "N/A")
 
-        rank_text = QLabel(rank_name if rank_name not in ("[]", "") else "N/A")
+        rank_text = QLabel(self.player_formatter.current_rank_display(player))
         rank_text.setObjectName("metaValue")
 
         rr_value = str(player.get("rr", "N/A"))
@@ -5679,8 +5646,8 @@ class ValorantStatsWindow(QMainWindow):
         peak_icon_label.setAlignment(Qt.AlignCenter)
 
         peak_name = str(player.get("peak_rank", "Unknown"))
-        peak_rank_display = "N/A" if peak_name.upper() == "UNRANKED" else peak_name
-        peak_icon = self.rank_icons.get("Unranked") if peak_rank_display == "N/A" else self.rank_icons.get(peak_name)
+        peak_rank_display = self.player_formatter.peak_rank_display(player)
+        peak_icon = self.rank_icons.get(self.player_formatter.peak_rank_icon_key(player))
         if peak_icon:
             peak_icon_label.setPixmap(
                 peak_icon.scaled(compact_rank_icon_size, compact_rank_icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -5690,34 +5657,30 @@ class ValorantStatsWindow(QMainWindow):
         else:
             peak_icon_label.setText(peak_name)
 
-        peak_text = QLabel(peak_rank_display if peak_name not in ("[]", "") else "N/A")
+        peak_text = QLabel(peak_rank_display)
         peak_text.setObjectName("metaValue")
 
-        peak_act_label = QLabel(get_peak_act_display(player.get("peak_act", "N/A")))
+        peak_act_label = QLabel(self.player_formatter.peak_act_display(player.get("peak_act", "N/A")))
         peak_act_label.setObjectName("metaAux")
 
         meta_bar.addStretch(1)
 
         rating_changes = player.get("rating_change", [])
         for change in rating_changes:
-            text_val = str(change).replace("-", "")
+            change_display = self.player_formatter.rating_change_display(change)
+            text_val = change_display.text
 
             circle_label = QLabel(text_val)
             circle_label.setFixedSize(42, 42)
             circle_label.setAlignment(Qt.AlignCenter)
 
-            try:
-                val = float(change)
-                if val > 0:
-                    bg_color = THEME_TEAL
-                    text_color = "#000000"
-                elif val < 0:
-                    bg_color = THEME_RED
-                    text_color = THEME_TEXT
-                else:
-                    bg_color = "#7f7f7f"
-                    text_color = THEME_TEXT
-            except (ValueError, TypeError):
+            if change_display.tone == "positive":
+                bg_color = THEME_TEAL
+                text_color = "#000000"
+            elif change_display.tone == "negative":
+                bg_color = THEME_RED
+                text_color = THEME_TEXT
+            else:
                 bg_color = "#7f7f7f"
                 text_color = THEME_TEXT
 
@@ -5729,27 +5692,27 @@ class ValorantStatsWindow(QMainWindow):
         stats_row = QHBoxLayout()
         stats_row.setSpacing(5)
 
-        matches_value = str(player.get("matches", 0))
+        matches_value = self.player_formatter.stat_display_value(player, "matches")
         matches_widget, _ = self.create_stat_widget("Games", matches_value)
         stats_row.addWidget(matches_widget)
 
-        wl_value = str(player.get("wl", "N/A"))
+        wl_value = self.player_formatter.stat_display_value(player, "wl")
         wl_widget, wl_label = self.create_stat_widget("W/L", wl_value)
         self.apply_stat_colour(wl_label, wl_value, "wl")
         stats_row.addWidget(wl_widget)
 
-        acs_value = str(player.get("acs", "N/A"))
+        acs_value = self.player_formatter.stat_display_value(player, "acs")
         acs_widget, acs_label = self.create_stat_widget("ACS", acs_value)
         self.apply_stat_colour(acs_label, acs_value, "acs")
         stats_row.addWidget(acs_widget)
 
-        kd_value = str(player.get("kd", "N/A"))
+        kd_value = self.player_formatter.stat_display_value(player, "kd")
         kd_widget, kd_label = self.create_stat_widget("KD", kd_value)
         self.apply_stat_colour(kd_label, kd_value, "kd")
         stats_row.addWidget(kd_widget)
 
         hs_raw = player.get("hs", "N/A")
-        hs_value = f"{hs_raw}%" if str(hs_raw) not in ("N/A", "[]") else str(hs_raw)
+        hs_value = self.player_formatter.stat_display_value(player, "hs")
         hs_widget, hs_label = self.create_stat_widget("HS", hs_value)
         self.apply_stat_colour(hs_label, str(hs_raw), "hs")
         stats_row.addWidget(hs_widget)
@@ -5773,24 +5736,20 @@ class ValorantStatsWindow(QMainWindow):
 
         rating_changes = player.get("rating_change", [])[:3]
         for change in rating_changes:
-            text_val = str(change).replace("-", "")
+            change_display = self.player_formatter.rating_change_display(change)
+            text_val = change_display.text
 
             circle_label = QLabel(text_val)
             circle_label.setFixedSize(42, 42)
             circle_label.setAlignment(Qt.AlignCenter)
 
-            try:
-                val = float(change)
-                if val > 0:
-                    bg_color = THEME_TEAL
-                    text_color = "#000000"
-                elif val < 0:
-                    bg_color = THEME_RED
-                    text_color = THEME_TEXT
-                else:
-                    bg_color = "#7f7f7f"
-                    text_color = THEME_TEXT
-            except (ValueError, TypeError):
+            if change_display.tone == "positive":
+                bg_color = THEME_TEAL
+                text_color = "#000000"
+            elif change_display.tone == "negative":
+                bg_color = THEME_RED
+                text_color = THEME_TEXT
+            else:
                 bg_color = "#7f7f7f"
                 text_color = THEME_TEXT
 
@@ -5806,7 +5765,7 @@ class ValorantStatsWindow(QMainWindow):
         peak_row.setSpacing(8)
 
         peak_icon_size = 48
-        peak_act_label = QLabel(get_peak_act_display(player.get("peak_act", "N/A")))
+        peak_act_label = QLabel(self.player_formatter.peak_act_display(player.get("peak_act", "N/A")))
         peak_act_label.setAlignment(Qt.AlignCenter)
         peak_act_font = peak_act_label.font()
         peak_act_font.setBold(True)
@@ -5821,8 +5780,8 @@ class ValorantStatsWindow(QMainWindow):
         peak_icon_label.setAlignment(Qt.AlignCenter)
         peak_icon_label.setFixedSize(peak_icon_size, peak_icon_size)
         peak_name = str(player.get("peak_rank", "Unknown"))
-        peak_rank_display = "N/A" if peak_name.upper() == "UNRANKED" else peak_name
-        peak_icon = self.rank_icons.get("Unranked") if peak_rank_display == "N/A" else self.rank_icons.get(peak_name)
+        peak_rank_display = self.player_formatter.peak_rank_display(player)
+        peak_icon = self.rank_icons.get(self.player_formatter.peak_rank_icon_key(player))
 
         if peak_icon:
             peak_icon_label.setPixmap(
@@ -5861,7 +5820,7 @@ class ValorantStatsWindow(QMainWindow):
                 rank_icon.scaled(current_rank_icon_size, current_rank_icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
         else:
-            current_rank_icon_label.setText(rank_name if rank_name not in ("[]", "") else "N/A")
+            current_rank_icon_label.setText(self.player_formatter.current_rank_display(player))
             current_rank_icon_label.setStyleSheet(f"color: {THEME_MUTED}; font-size: 14px; font-weight: bold;")
 
         right_rank_stack_layout.addWidget(current_rank_icon_label, 0, Qt.AlignHCenter)
@@ -5910,51 +5869,7 @@ class ValorantStatsWindow(QMainWindow):
         outer_layout.addWidget(content_frame)
         return row
     def apply_stat_colour(self, label, value, category):
-        colour = None
-        try:
-            if category == "wl":
-                val = float(str(value).replace("%", ""))
-                if val < 47:
-                    colour = "red"
-                elif val < 53:
-                    colour = "gold"
-                elif val < 60:
-                    colour = "limegreen"
-                else:
-                    colour = "cyan"
-            elif category == "acs":
-                val = float(value)
-                if val < 200:
-                    colour = "red"
-                elif val < 225:
-                    colour = "gold"
-                elif val < 250:
-                    colour = "limegreen"
-                else:
-                    colour = "cyan"
-            elif category == "kd":
-                val = float(value)
-                if val < 0.9:
-                    colour = "red"
-                elif val < 1.1:
-                    colour = "gold"
-                elif val < 1.25:
-                    colour = "limegreen"
-                else:
-                    colour = "cyan"
-            elif category == "hs":
-                val = float(value)
-                if val < 20:
-                    colour = "red"
-                elif val < 30:
-                    colour = "gold"
-                elif val < 40:
-                    colour = "limegreen"
-                else:
-                    colour = "cyan"
-        except (TypeError, ValueError):
-            colour = None
-
+        colour = self.player_formatter.stat_colour_category(value, category)
         if colour:
             label.setStyleSheet(f"color: {colour};")
 
@@ -6662,10 +6577,13 @@ class ValorantStatsWindow(QMainWindow):
         )
 
     def load_players(self, players):
-        self.left_players = []
-        self.right_players = []
         self.schedule_player_cosmetic_prefetch(players)
-        player_iterable = list(players.values()) if isinstance(players, dict) else list(players or [])
+        gs = getattr(self.valo_rank, "gs", None)
+        gamemode = gs[0] if isinstance(gs, (list, tuple)) and len(gs) > 0 else None
+        player_iterable, self.left_players, self.right_players = self.window_state.split_players(
+            players,
+            gamemode=gamemode,
+        )
         self.update_starting_side_label(player_iterable)
 
         if not player_iterable:
@@ -6675,21 +6593,6 @@ class ValorantStatsWindow(QMainWindow):
             QTimer.singleShot(0, self.schedule_remote_player_icons_load)
             return
 
-        for i, player in enumerate(player_iterable):
-            is_deathmatch = len(self.valo_rank.gs) > 0 and self.valo_rank.gs[0] == "Deathmatch"
-
-            if is_deathmatch:
-                if str(i / 2)[2] == "0":
-                    self.left_players.append(player)
-                else:
-                    self.right_players.append(player)
-            else:
-                team = player.get("team")
-                if team == "Red":
-                    self.left_players.append(player)
-                elif team == "Blue":
-                    self.right_players.append(player)
-
         self.populate_team_layout(self.left_scroll_area, self.left_layout, self.left_players)
         self.populate_team_layout(self.right_scroll_area, self.right_layout, self.right_players)
         self.update_metadata()
@@ -6697,20 +6600,9 @@ class ValorantStatsWindow(QMainWindow):
         QTimer.singleShot(0, self.schedule_remote_player_icons_load)
 
     def update_starting_side_label(self, players):
-        side_by_team = {
-            "Red": "DEFENSE",
-            "Blue": "ATTACK",
-        }
-        local_puuid = str(getattr(self, "puuid", None) or "").strip()
-        side = None
-        if local_puuid:
-            for player in players:
-                if str(player.get("puuid", "")).strip() == local_puuid:
-                    side = side_by_team.get(player.get("team"))
-                    break
-
-        if side:
-            self.starting_side_label.setText(f"STARTING SIDE: {side}")
+        label_text = self.window_state.starting_side_label_text(players, getattr(self, "puuid", None))
+        if label_text:
+            self.starting_side_label.setText(label_text)
         else:
             self.starting_side_label.clear()
 

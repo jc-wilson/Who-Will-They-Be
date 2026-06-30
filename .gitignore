@@ -15,3 +15,8 @@ scratch_test.txt
 loadouts/
 agent_selection/
 tests/
+!tests/
+tests/*
+tests/__pycache__/
+!tests/test_frontend_state.py
+!tests/test_player_display.py
