@@ -20,3 +20,4 @@ tests/*
 tests/__pycache__/
 !tests/test_frontend_state.py
 !tests/test_player_display.py
+!tests/test_qml_bridge.py

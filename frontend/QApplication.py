@@ -83,9 +83,9 @@ from core.asset_loader import (
     load_buddy_pixmap,
 )
 try:
-    from frontend.qml_bridge import QmlProbeBridge
+    from frontend.qml_bridge import QmlProbeBridge, ThemePopupBridge
 except ModuleNotFoundError:
-    from qml_bridge import QmlProbeBridge
+    from qml_bridge import QmlProbeBridge, ThemePopupBridge
 
 CURRENT_VERSION = "1.12.4"
 UPDATE_CHECK_URL = "https://ValScanner.com/version.json"
@@ -2996,6 +2996,17 @@ class ThemePopup(QDialog):
             button.style().polish(button)
             button.update()
 
+    def refresh_theme_state(self, theme_name, surface_mode):
+        self.current_theme_name = normalize_theme_name(theme_name)
+        self.current_surface_mode = normalize_theme_surface_mode(surface_mode)
+        self.surface_mode_switch.blockSignals(True)
+        self.surface_mode_switch.setChecked(self.current_surface_mode == "opaque")
+        self.surface_mode_switch.blockSignals(False)
+        self.apply_theme_styles()
+
+    def apply_toggle_switch_theme(self):
+        self.surface_mode_switch.apply_theme_colors()
+
     def select_theme(self, theme_name):
         normalized_theme_name = normalize_theme_name(theme_name)
         self.current_theme_name = normalized_theme_name
@@ -3006,6 +3017,107 @@ class ThemePopup(QDialog):
         self.current_surface_mode = "opaque" if checked else "transparent"
         self.surface_mode_callback(self.current_surface_mode)
         self.apply_theme_styles()
+
+
+class QmlThemePopup(QDialog):
+    def __init__(
+        self,
+        current_theme_name,
+        current_surface_mode,
+        callback,
+        surface_mode_callback,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.current_theme_name = normalize_theme_name(current_theme_name)
+        self.current_surface_mode = normalize_theme_surface_mode(current_surface_mode)
+        self.callback = callback
+        self.surface_mode_callback = surface_mode_callback
+        self._qml_errors = []
+
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.Popup)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        self.bridge = ThemePopupBridge(
+            THEME_DEFINITIONS,
+            THEME_ORDER,
+            self.current_theme_name,
+            self.current_surface_mode,
+            self.select_theme,
+            self.set_surface_mode,
+            self.close,
+            self._build_style_colors(),
+            normalize_theme_name=normalize_theme_name,
+            normalize_surface_mode=normalize_theme_surface_mode,
+            parent=self,
+        )
+
+        self.qml_widget = QQuickWidget(self)
+        self.qml_widget.setObjectName("qmlThemePopupWidget")
+        resize_mode = getattr(getattr(QQuickWidget, "ResizeMode", QQuickWidget), "SizeRootObjectToView")
+        self.qml_widget.setResizeMode(resize_mode)
+        self.qml_widget.setClearColor(QColor(0, 0, 0, 0))
+        self.qml_widget.rootContext().setContextProperty("bridge", self.bridge)
+        self.qml_widget.statusChanged.connect(self._record_qml_status)
+
+        qml_path = resource_path(os.path.join("frontend", "qml", "ThemePopup.qml"))
+        self.qml_widget.setSource(QUrl.fromLocalFile(qml_path))
+        self._record_qml_status(self.qml_widget.status())
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.qml_widget)
+        self.resize(840, 640)
+
+    def _build_style_colors(self):
+        return {
+            "main": THEME_MAIN,
+            "panel": THEME_PANEL,
+            "card": THEME_CARD,
+            "cardAlt": THEME_CARD_ALT,
+            "border": THEME_BORDER,
+            "borderSoft": THEME_BORDER_SOFT,
+            "text": THEME_TEXT,
+            "muted": THEME_MUTED,
+            "accent": THEME_ACCENT,
+            "accentHover": THEME_ACCENT_HOVER,
+            "window": THEME_WINDOW,
+        }
+
+    def _record_qml_status(self, status):
+        error_status = getattr(getattr(QQuickWidget, "Status", QQuickWidget), "Error")
+        if status != error_status:
+            return
+        self._qml_errors = [error.toString() for error in self.qml_widget.errors()] or ["Unknown QML load error"]
+        for error_message in self._qml_errors:
+            print(f"[QML Theme Popup] {error_message}")
+
+    def has_qml_errors(self):
+        return bool(self._qml_errors)
+
+    def refresh_theme_state(self, theme_name, surface_mode):
+        self.current_theme_name = normalize_theme_name(theme_name)
+        self.current_surface_mode = normalize_theme_surface_mode(surface_mode)
+        self.bridge.refresh_theme_state(
+            self.current_theme_name,
+            self.current_surface_mode,
+            self._build_style_colors(),
+        )
+
+    def apply_theme_styles(self):
+        self.refresh_theme_state(self.current_theme_name, self.current_surface_mode)
+
+    def apply_toggle_switch_theme(self):
+        self.apply_theme_styles()
+
+    def select_theme(self, theme_name):
+        normalized_theme_name = normalize_theme_name(theme_name)
+        self.current_theme_name = normalized_theme_name
+        self.callback(normalized_theme_name)
+
+    def set_surface_mode(self, surface_mode):
+        self.current_surface_mode = normalize_theme_surface_mode(surface_mode)
+        self.surface_mode_callback(self.current_surface_mode)
 
 
 class ToolsPopup(QDialog):
@@ -4418,7 +4530,9 @@ class ValorantStatsWindow(QMainWindow):
                 toggle.apply_theme_colors()
 
         theme_popup = getattr(self, "_theme_popup_dialog", None)
-        if theme_popup is not None and hasattr(theme_popup, "surface_mode_switch"):
+        if theme_popup is not None and hasattr(theme_popup, "apply_toggle_switch_theme"):
+            theme_popup.apply_toggle_switch_theme()
+        elif theme_popup is not None and hasattr(theme_popup, "surface_mode_switch"):
             theme_popup.surface_mode_switch.apply_theme_colors()
 
     def apply_theme_icons(self):
@@ -4643,13 +4757,26 @@ class ValorantStatsWindow(QMainWindow):
             active_popup.activateWindow()
             return
 
-        self._theme_popup_dialog = ThemePopup(
+        use_widget_popup = os.environ.get("VALSCANNER_THEME_POPUP_WIDGET") == "1"
+        popup_class = ThemePopup if use_widget_popup else QmlThemePopup
+        popup = popup_class(
             self.current_theme_name,
             self.current_theme_surface_mode,
             self.on_theme_selected,
             self.on_theme_surface_mode_selected,
             self,
         )
+        if not use_widget_popup and hasattr(popup, "has_qml_errors") and popup.has_qml_errors():
+            popup.close()
+            popup.deleteLater()
+            popup = ThemePopup(
+                self.current_theme_name,
+                self.current_theme_surface_mode,
+                self.on_theme_selected,
+                self.on_theme_surface_mode_selected,
+                self,
+            )
+        self._theme_popup_dialog = popup
         self._theme_popup_dialog.finished.connect(lambda *_: setattr(self, "_theme_popup_dialog", None))
         self._theme_popup_dialog.open()
 
@@ -4686,12 +4813,12 @@ class ValorantStatsWindow(QMainWindow):
 
         current_popup = getattr(self, "_theme_popup_dialog", None)
         if current_popup is not None:
-            current_popup.current_theme_name = self.current_theme_name
-            current_popup.current_surface_mode = self.current_theme_surface_mode
-            current_popup.surface_mode_switch.blockSignals(True)
-            current_popup.surface_mode_switch.setChecked(self.current_theme_surface_mode == "opaque")
-            current_popup.surface_mode_switch.blockSignals(False)
-            current_popup.apply_theme_styles()
+            if hasattr(current_popup, "refresh_theme_state"):
+                current_popup.refresh_theme_state(self.current_theme_name, self.current_theme_surface_mode)
+            else:
+                current_popup.current_theme_name = self.current_theme_name
+                current_popup.current_surface_mode = self.current_theme_surface_mode
+                current_popup.apply_theme_styles()
 
         tools_popup = getattr(self, "_tools_popup_dialog", None)
         if tools_popup is not None:
