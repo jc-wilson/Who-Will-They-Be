@@ -89,20 +89,23 @@ Rectangle {
                 }
             }
 
-            Text {
+            Rectangle {
                 id: closeControl
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 width: 32
                 height: 32
-                text: "x"
-                color: closeMouse.containsMouse
-                    ? (bridge.styleColors.accent || "#4da3ff")
-                    : (bridge.styleColors.muted || "#93a4bb")
-                font.pixelSize: 22
-                font.bold: true
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
+                radius: 16
+                color: closeMouse.containsMouse ? (bridge.styleColors.cardAlt || "transparent") : "transparent"
+
+                Image {
+                    anchors.centerIn: parent
+                    width: 16
+                    height: 16
+                    source: bridge.closeIconPath
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                }
 
                 Behavior on color {
                     ColorAnimation { duration: 140; easing.type: Easing.OutCubic }

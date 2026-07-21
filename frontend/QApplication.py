@@ -1,6 +1,8 @@
 ﻿from html import escape
+import hashlib
 import math
 import time
+import tempfile
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow,
@@ -9,7 +11,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect, QSizePolicy, QProgressBar,
     QGraphicsOpacityEffect, QLineEdit, QMessageBox
 )
-from PySide6.QtCore import Qt, QEvent, QTimer, QSize, QUrl, QPoint, QRectF
+from PySide6.QtCore import Qt, QEvent, QTimer, QSize, QUrl, QPoint, QRectF, QRect
 from PySide6.QtGui import (
     QPixmap,
     QImage,
@@ -74,6 +76,7 @@ from core.player_icons import (
     normalize_player_icon_rules,
 )
 from core.frontend_state import FrontendWindowState
+from core.delayed_hydration import should_run_delayed_hydration
 from core.player_display import PlayerDisplayFormatter
 from core.player_card_display import SPECIAL_BUDDY_UUID, build_player_card_display
 from core.valorant_api_cache import refresh_valorant_api_jsons
@@ -84,9 +87,9 @@ from core.asset_loader import (
     load_buddy_pixmap,
 )
 try:
-    from frontend.qml_bridge import PlayerCardBridge, QmlProbeBridge, ThemePopupBridge
+    from frontend.qml_bridge import PlayerCardBridge, QmlProbeBridge, ThemePopupBridge, TopBarBridge
 except ModuleNotFoundError:
-    from qml_bridge import PlayerCardBridge, QmlProbeBridge, ThemePopupBridge
+    from qml_bridge import PlayerCardBridge, QmlProbeBridge, ThemePopupBridge, TopBarBridge
 
 CURRENT_VERSION = "1.12.4"
 UPDATE_CHECK_URL = "https://ValScanner.com/version.json"
@@ -857,15 +860,11 @@ def create_qtawesome_icon(icon_name, color=None, disabled_color=None):
         return QIcon()
 
 def configure_close_button(button, icon_size=20):
-    close_icon = create_qtawesome_icon(
-        CLOSE_ICON_NAME,
-        color=THEME_TEXT,
-        disabled_color=THEME_MUTED,
-    )
+    close_icon = QIcon(resource_path(os.path.join("assets", "xmark-solid.png")))
+    button.setText("")
     if close_icon.isNull():
-        button.setText("X")
+        button.setIcon(QIcon())
     else:
-        button.setText("")
         button.setIcon(close_icon)
         button.setIconSize(QSize(icon_size, icon_size))
     button.setToolTip("Close")
@@ -874,6 +873,19 @@ def configure_close_button(button, icon_size=20):
 def get_agent_asset_path(agent_name):
     filename = str(agent_name).replace("/", "_")
     return resource_path(os.path.join("assets", "agents", f"{filename}.png"))
+
+def get_asset_icon_path(filename):
+    return resource_path(os.path.join("assets", str(filename or "")))
+
+
+def qml_player_icon_cache_path(puuid, cache_dir=None):
+    normalized_puuid = str(puuid or "").strip().lower()
+    if not normalized_puuid:
+        return ""
+
+    cache_dir = cache_dir or os.path.join(tempfile.gettempdir(), "valscanner_qml_player_icons")
+    digest = hashlib.sha256(normalized_puuid.encode("utf-8")).hexdigest()[:24]
+    return os.path.join(cache_dir, f"{digest}.png")
 
 def discover_map_asset_uuids():
     maps_dir = resource_path(os.path.join("assets", "maps"))
@@ -2230,7 +2242,7 @@ class AgentPopup(QDialog):
         return tile
 
     def build_exit_tile(self, cols):
-        tile = QPushButton("X")
+        tile = QPushButton("")
         tile.setObjectName("exitTile")
 
         full_width = (self.tile_width * cols) + (self.grid_spacing * (cols - 1))
@@ -2503,7 +2515,7 @@ class MapAgentPopup(QDialog):
         scroll_area.setWidget(scroll_content)
         main_layout.addWidget(scroll_area, 1)
 
-        close_btn = QPushButton("X")
+        close_btn = QPushButton("")
         close_btn.setObjectName("popupCloseButton")
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setFixedHeight(44)
@@ -2839,7 +2851,7 @@ class ThemePopup(QDialog):
 
         main_layout.addLayout(grid)
 
-        close_btn = QPushButton("X")
+        close_btn = QPushButton("")
         close_btn.setObjectName("exitTile")
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setFixedHeight(52)
@@ -3048,6 +3060,7 @@ class QmlThemePopup(QDialog):
             self.set_surface_mode,
             self.close,
             self._build_style_colors(),
+            resource_path(os.path.join("assets", "xmark-solid.png")),
             normalize_theme_name=normalize_theme_name,
             normalize_surface_mode=normalize_theme_surface_mode,
             parent=self,
@@ -3332,6 +3345,37 @@ class ToolsPopup(QDialog):
 
         self.open()
 
+    def open_at_rect(self, anchor_widget, x, y, width, height):
+        self.adjustSize()
+        if anchor_widget is not None:
+            anchor_top_left = anchor_widget.mapToGlobal(QPoint(int(x), int(y)))
+            anchor_center = anchor_widget.mapToGlobal(QPoint(int(x + (width / 2)), int(y + (height / 2))))
+            popup_x = anchor_top_left.x() - max(0, (self.width() - int(width)) // 2)
+            popup_y = anchor_top_left.y() + int(height) + 10
+
+            parent_window = anchor_widget.window()
+            parent_geometry = parent_window.frameGeometry() if parent_window is not None else None
+            screen = QApplication.screenAt(anchor_center)
+            if screen is None and parent_window is not None and parent_window.windowHandle() is not None:
+                screen = parent_window.windowHandle().screen()
+
+            bounds = screen.availableGeometry() if screen is not None else None
+            if parent_geometry is not None and not parent_geometry.isNull():
+                if bounds is None:
+                    bounds = parent_geometry
+                else:
+                    bounds = bounds.intersected(parent_geometry)
+                    if bounds.isNull():
+                        bounds = screen.availableGeometry()
+
+            if bounds is not None and not bounds.isNull():
+                popup_x = max(bounds.left() + 12, min(popup_x, bounds.right() - self.width() - 12))
+                popup_y = max(bounds.top() + 12, min(popup_y, bounds.bottom() - self.height() - 12))
+
+            self.move(popup_x, popup_y)
+
+        self.open()
+
 
 class WeaponPopup(QDialog):
     WEAPON_ORDER = [
@@ -3514,7 +3558,7 @@ class WeaponPopup(QDialog):
         return tile
 
     def build_exit_tile(self):
-        tile = QPushButton("X")
+        tile = QPushButton("")
         tile.setObjectName("exitTile")
 
         full_width = (self.tile_width * 5) + (20 * 4)
@@ -3635,6 +3679,7 @@ class ValorantStatsWindow(QMainWindow):
             self.window_state,
             formatter=self.player_formatter,
             resource_path_resolver=resource_path,
+            player_icon_resolver=self.qml_player_icon_for_player,
             style_colors=self.build_player_card_style_colors(),
             loadout_callback=self.open_qml_player_loadout,
             flag_callback=self.flag_player_by_puuid,
@@ -3792,41 +3837,24 @@ class ValorantStatsWindow(QMainWindow):
         self.co_play_history = self.window_state.co_play_history
         self.last_standard_agent_text = initial_agent
         self.last_standard_agent_value = self.resolve_standard_agent_value(initial_agent)
+        self.get_agent_asset_path = get_agent_asset_path
+        self.get_asset_icon_path = get_asset_icon_path
+        self.top_bar_bridge = TopBarBridge(
+            self,
+            style_colors=self.build_player_card_style_colors(),
+            logo_path=resource_path("assets/logoone.png"),
+            parent=self,
+        )
 
         header_frame = QFrame()
         header_frame.setObjectName("headerFrame")
         self.header_frame = header_frame
 
         header_layout = QHBoxLayout(header_frame)
-        header_layout.setContentsMargins(18, 15, 18, 14)
-        header_layout.setSpacing(14)
-
-        header_layout.addWidget(self.gamemode_chip, alignment=Qt.AlignVCenter)
-        header_layout.addWidget(self.server_chip, alignment=Qt.AlignVCenter)
-
-        agent_block = QFrame()
-        agent_block.setObjectName("agentBlock")
-        agent_block.setFixedHeight(agent_block_height)
-        agent_layout = QHBoxLayout(agent_block)
-        agent_layout.setContentsMargins(11, 8, 11, 8)
-        agent_layout.setSpacing(10)
-        agent_layout.addWidget(self.agent_label)
-        agent_layout.addWidget(self.agent_select_btn)
-        agent_layout.addWidget(self.lock_agent_button)
-        agent_layout.addWidget(self.auto_lock_label)
-        agent_layout.addWidget(self.auto_lock_switch)
-        agent_layout.addWidget(self.map_lock_label)
-        agent_layout.addWidget(self.map_lock_switch)
-
-        header_layout.addWidget(agent_block, alignment=Qt.AlignVCenter)
-
-        header_layout.addWidget(self.starting_side_label, 1, alignment=Qt.AlignVCenter)
-        header_layout.addWidget(self.dodge_button, alignment=Qt.AlignVCenter)
-        header_layout.addWidget(self.load_more_matches_button, alignment=Qt.AlignVCenter)
-        header_layout.addWidget(self.tools_button, alignment=Qt.AlignVCenter)
-        header_layout.addWidget(self.presence_mode_indicator, alignment=Qt.AlignVCenter)
-
-        header_layout.addWidget(self.refresh_button, alignment=Qt.AlignVCenter)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(0)
+        self.qml_top_bar_widget = self.create_qml_top_bar_widget()
+        header_layout.addWidget(self.qml_top_bar_widget)
 
         left_panel, self.left_scroll_area, self.left_layout = self.build_team_panel("red")
         right_panel, self.right_scroll_area, self.right_layout = self.build_team_panel("blue")
@@ -3935,6 +3963,9 @@ class ValorantStatsWindow(QMainWindow):
         self._hydration_task = None
         self._hydration_match_id = self.window_state.hydration_match_id
         self._hydrated_match_ids = self.window_state.hydrated_match_ids
+        self._hydration_delay_ready_match_ids = set()
+        self._hydration_coregame_ready_match_ids = set()
+        self._hydration_running_match_ids = set()
 
         self.seen_prematch_ids = self.window_state.seen_prematch_ids
         self.seen_match_ids = self.window_state.seen_match_ids
@@ -3963,6 +3994,23 @@ class ValorantStatsWindow(QMainWindow):
         widget.setSource(QUrl.fromLocalFile(qml_path))
         self.log_qml_probe_errors(widget, widget.status())
         widget.setVisible(os.environ.get("VALSCANNER_QML_PROBE") == "1")
+        return widget
+
+    def create_qml_top_bar_widget(self):
+        widget = QQuickWidget(self)
+        widget.setObjectName("qmlTopBarWidget")
+        resize_mode = getattr(getattr(QQuickWidget, "ResizeMode", QQuickWidget), "SizeRootObjectToView")
+        widget.setResizeMode(resize_mode)
+        widget.setFixedHeight(96)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        widget.setClearColor(QColor(0, 0, 0, 0))
+        widget.rootContext().setContextProperty("topBarBridge", self.top_bar_bridge)
+        widget.statusChanged.connect(lambda status: self.log_qml_top_bar_errors(widget, status))
+        self.update_top_bar_background()
+
+        qml_path = resource_path(os.path.join("frontend", "qml", "TopBar.qml"))
+        widget.setSource(QUrl.fromLocalFile(qml_path))
+        self.log_qml_top_bar_errors(widget, widget.status())
         return widget
 
     def build_player_card_style_colors(self):
@@ -3997,6 +4045,17 @@ class ValorantStatsWindow(QMainWindow):
             return
         for error in widget.errors():
             print(f"[QML Probe] {error.toString()}")
+
+    def log_qml_top_bar_errors(self, widget, status):
+        error_status = getattr(getattr(QQuickWidget, "Status", QQuickWidget), "Error")
+        if status != error_status:
+            return
+        errors = widget.errors() or []
+        if not errors:
+            print("[QML TopBar] Unknown QML load error")
+            return
+        for error in errors:
+            print(f"[QML TopBar] {error.toString()}")
 
     def create_qml_player_card_widget(self):
         widget = QQuickWidget(self)
@@ -4050,6 +4109,7 @@ class ValorantStatsWindow(QMainWindow):
                 formatter=self.player_formatter,
                 flagged_players=self.flagged_players,
                 resource_path_resolver=resource_path,
+                player_icon_resolver=self.qml_player_icon_for_player,
             ),
         )
         widget.statusChanged.connect(
@@ -4129,6 +4189,51 @@ class ValorantStatsWindow(QMainWindow):
         if player_card_bridge is not None:
             player_card_bridge.set_style_colors(self.build_player_card_style_colors())
             player_card_bridge.refresh()
+        self.notify_top_bar_bindings()
+
+    def notify_top_bar_bindings(self):
+        top_bar_bridge = getattr(self, "top_bar_bridge", None)
+        if top_bar_bridge is None:
+            return
+        top_bar_bridge.set_style_colors(self.build_player_card_style_colors())
+        self.update_top_bar_background()
+        top_bar_bridge.notify_bindings()
+
+    def update_top_bar_background(self):
+        top_bar_bridge = getattr(self, "top_bar_bridge", None)
+        if top_bar_bridge is None:
+            return
+
+        top_bar_height = 96
+        if hasattr(self, "qml_top_bar_widget") and self.qml_top_bar_widget is not None:
+            top_bar_height = max(1, self.qml_top_bar_widget.height() or top_bar_height)
+
+        window_width = max(1, self.width() or self.minimumWidth())
+        window_height = max(top_bar_height, self.height() or self.minimumHeight())
+        decorative_background = bool(get_active_theme_style_profile().get("decorative_background"))
+
+        top_bar_pixmap = QPixmap(window_width, top_bar_height)
+        top_bar_pixmap.fill(make_qcolor(THEME_WINDOW))
+
+        painter = QPainter(top_bar_pixmap)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.setPen(Qt.NoPen)
+        painter.drawPixmap(
+            QRect(0, 0, window_width, window_height),
+            get_background_pixmap(window_width, window_height, decorative_background),
+        )
+        painter.setOpacity(0.5)
+        painter.fillRect(QRect(0, 0, window_width, top_bar_height), QBrush(get_background_dither_pixmap()))
+        painter.end()
+
+        background_path = os.path.join(tempfile.gettempdir(), "valscanner_qml_topbar_background.png")
+        top_bar_pixmap.save(background_path, "PNG")
+        background_url = QUrl.fromLocalFile(background_path)
+        try:
+            background_url.setQuery(str(int(time.time() * 1000)))
+        except Exception:
+            pass
+        top_bar_bridge.set_background_path(background_url.toString())
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -4630,6 +4735,7 @@ class ValorantStatsWindow(QMainWindow):
         self.update_presence_mode_indicator()
         if hasattr(self, "queue_snipe_switch"):
             self.sync_party_detection_tool_states()
+        self.notify_top_bar_bindings()
 
     def apply_restored_agent_lock_state(self, auto_lock_enabled, map_lock_enabled):
         self.auto_lock_switch.blockSignals(True)
@@ -4647,6 +4753,7 @@ class ValorantStatsWindow(QMainWindow):
 
         self.on_auto_lock_toggled(self.auto_lock_switch.isChecked())
         self.on_map_lock_toggled(self.map_lock_switch.isChecked())
+        self.notify_top_bar_bindings()
 
     def apply_restored_queue_snipe_state(self, queue_snipe_enabled, selected_friend):
         self.queue_snipe_selected_friend = self.window_state.update_queue_snipe_friend(selected_friend)
@@ -4656,6 +4763,7 @@ class ValorantStatsWindow(QMainWindow):
         self.queue_snipe_switch.blockSignals(False)
         self.queue_snipe_service.set_selected_friend(self.queue_snipe_selected_friend)
         self.sync_party_detection_tool_states()
+        self.notify_top_bar_bindings()
 
     def apply_restored_presence_mode(self, presence_mode):
         self.presence_mode = self.window_state.update_presence_mode(presence_mode)
@@ -4666,6 +4774,7 @@ class ValorantStatsWindow(QMainWindow):
         if hasattr(self, "startup_coordinator") and self.startup_coordinator:
             self.startup_coordinator.mitm_service.set_presence_mode(self.presence_mode)
         self.sync_party_detection_tool_states()
+        self.notify_top_bar_bindings()
 
     def update_presence_mode_indicator(self):
         if not hasattr(self, "presence_mode_indicator") or self.presence_mode_indicator is None:
@@ -4674,16 +4783,19 @@ class ValorantStatsWindow(QMainWindow):
         is_offline = normalize_presence_mode(self.presence_mode) == PRESENCE_MODE_OFFLINE
         self.presence_mode_indicator.setVisible(is_offline)
         if not is_offline:
+            self.notify_top_bar_bindings()
             return
 
         if hasattr(self, "offline_icon") and not self.offline_icon.isNull():
             scaled_icon = self.offline_icon.pixmap(QSize(18, 18))
             self.presence_mode_indicator.setPixmap(scaled_icon)
             self.presence_mode_indicator.setText("")
+            self.notify_top_bar_bindings()
             return
 
         self.presence_mode_indicator.setPixmap(QPixmap())
         self.presence_mode_indicator.setText("OFF")
+        self.notify_top_bar_bindings()
 
     def apply_toggle_switch_theme(self):
         for toggle_name in (
@@ -4734,17 +4846,20 @@ class ValorantStatsWindow(QMainWindow):
         if not self.map_lock_switch.isChecked():
             self.agent_select_btn.setText(agent_name)
         self.persist_agent_lock_state()
+        self.notify_top_bar_bindings()
 
     def restore_standard_agent_selection(self):
         restored_text = self.last_standard_agent_text or "Random"
         self.agent_select_btn.setText(restored_text)
         if restored_text not in MAP_SPECIFIC_ROLE_TOKENS:
             self.agent = self.last_standard_agent_value or self.uuid_handler.agent_converter_reversed(restored_text)
+        self.notify_top_bar_bindings()
 
     def on_auto_lock_toggled(self, checked):
         self.map_lock_switch.setEnabled(bool(checked))
         if checked:
             self.persist_agent_lock_state()
+            self.notify_top_bar_bindings()
             return
 
         if self.map_lock_switch.isChecked():
@@ -4753,6 +4868,7 @@ class ValorantStatsWindow(QMainWindow):
             self.map_lock_switch.blockSignals(False)
         self.restore_standard_agent_selection()
         self.persist_agent_lock_state()
+        self.notify_top_bar_bindings()
 
     def on_map_lock_toggled(self, checked):
         if checked and not self.auto_lock_switch.isChecked():
@@ -4760,6 +4876,7 @@ class ValorantStatsWindow(QMainWindow):
             self.map_lock_switch.setChecked(False)
             self.map_lock_switch.blockSignals(False)
             self.persist_agent_lock_state()
+            self.notify_top_bar_bindings()
             return
 
         if checked:
@@ -4767,6 +4884,7 @@ class ValorantStatsWindow(QMainWindow):
         else:
             self.restore_standard_agent_selection()
         self.persist_agent_lock_state()
+        self.notify_top_bar_bindings()
 
     def save_map_agent_selection(self, map_uuid, selection_value):
         self.map_agent_selection[map_uuid] = str(selection_value or "")
@@ -4778,10 +4896,12 @@ class ValorantStatsWindow(QMainWindow):
             self.queue_snipe_switch.blockSignals(True)
             self.queue_snipe_switch.setChecked(False)
             self.queue_snipe_switch.blockSignals(False)
+            self.notify_top_bar_bindings()
             return
 
         self.sync_party_detection_tool_states()
         self.persist_agent_lock_state()
+        self.notify_top_bar_bindings()
 
     def on_queue_snipe_friend_selected(self, friend_data):
         self.queue_snipe_selected_friend = self.window_state.update_queue_snipe_friend(friend_data)
@@ -4789,6 +4909,7 @@ class ValorantStatsWindow(QMainWindow):
         self.queue_snipe_service.set_selected_friend(self.queue_snipe_selected_friend)
         self.sync_party_detection_tool_states()
         self.persist_agent_lock_state()
+        self.notify_top_bar_bindings()
 
     def on_presence_mode_toggled(self, checked):
         self.presence_mode = self.window_state.update_presence_mode(
@@ -4797,6 +4918,7 @@ class ValorantStatsWindow(QMainWindow):
         if hasattr(self, "startup_coordinator") and self.startup_coordinator:
             self.startup_coordinator.mitm_service.set_presence_mode(self.presence_mode)
         self.persist_agent_lock_state()
+        self.notify_top_bar_bindings()
 
     def open_queue_snipe_popup(self):
         print("[QueueSnipeUI] open_queue_snipe_popup clicked")
@@ -4904,7 +5026,7 @@ class ValorantStatsWindow(QMainWindow):
             self.loadouts_button.setEnabled(False)
             asyncio.create_task(self._open_user_loadouts_async())
 
-    def open_tools_popup(self):
+    def open_tools_popup(self, anchor_rect=None):
         tools_popup = getattr(self, "_tools_popup_dialog", None)
         if tools_popup is None:
             return
@@ -4915,6 +5037,15 @@ class ValorantStatsWindow(QMainWindow):
             return
 
         tools_popup.apply_theme_styles()
+        if isinstance(anchor_rect, dict) and hasattr(self, "qml_top_bar_widget"):
+            tools_popup.open_at_rect(
+                self.qml_top_bar_widget,
+                anchor_rect.get("x", 0),
+                anchor_rect.get("y", 0),
+                anchor_rect.get("width", 0),
+                anchor_rect.get("height", 0),
+            )
+            return
         tools_popup.open_near(self.tools_button)
 
     def open_theme_popup(self):
@@ -5643,6 +5774,29 @@ class ValorantStatsWindow(QMainWindow):
 
         rule = self.player_icon_rules.get(normalized_puuid, {})
         return pixmap, str(rule.get("tooltip") or "Player icon")
+
+    def qml_player_icon_for_player(self, player):
+        normalized_puuid = str(player.get("puuid") or "").strip().lower()
+        if not normalized_puuid:
+            return {}
+
+        icon_data = self.player_icon_for_player(player)
+        if icon_data is None:
+            return {}
+
+        pixmap, tooltip = icon_data
+        if pixmap is None or pixmap.isNull():
+            return {}
+
+        icon_path = qml_player_icon_cache_path(normalized_puuid)
+        os.makedirs(os.path.dirname(icon_path), exist_ok=True)
+        if not pixmap.save(icon_path, "PNG"):
+            return {}
+
+        return {
+            "iconPath": icon_path,
+            "tooltip": str(tooltip or "Player icon"),
+        }
 
     def player_is_flagged(self, player):
         return self.player_formatter.player_is_flagged(player)
@@ -6685,6 +6839,7 @@ class ValorantStatsWindow(QMainWindow):
     def instalock_agent(self):
         if self.lock_agent_button.isEnabled():
             self.lock_agent_button.setEnabled(False)
+            self.notify_top_bar_bindings()
             asyncio.create_task(self.instalock_agent_async())
 
     async def instalock_agent_async(self):
@@ -6722,6 +6877,7 @@ class ValorantStatsWindow(QMainWindow):
             await instalock_agent(self.agent, self.valo_rank.handler)
         finally:
             self.lock_agent_button.setEnabled(True)
+            self.notify_top_bar_bindings()
 
     def safe_load_players(self, data):
         QTimer.singleShot(0, lambda: self.load_players(data))
@@ -6729,6 +6885,7 @@ class ValorantStatsWindow(QMainWindow):
     def run_dodge_button(self):
         if self.dodge_button.isEnabled():
             self.dodge_button.setEnabled(False)
+            self.notify_top_bar_bindings()
             asyncio.create_task(self._dodge_async())
 
     async def _dodge_async(self):
@@ -6736,6 +6893,7 @@ class ValorantStatsWindow(QMainWindow):
             await self.dodge_game.dodge_func(self.valo_rank.handler)
         finally:
             self.dodge_button.setEnabled(True)
+            self.notify_top_bar_bindings()
 
     def run_valo_stats(self, prematch_id=None, match_id=None, party_id=None, map_instalock=None):
         if prematch_id:
@@ -6776,16 +6934,34 @@ class ValorantStatsWindow(QMainWindow):
             return
         self.cancel_pending_hydration()
         self._hydration_match_id = match_id
+        self._hydration_delay_ready_match_ids.discard(match_id)
         self._hydration_task = asyncio.create_task(self._delayed_hydration(match_id))
 
     async def _delayed_hydration(self, match_id):
         try:
             await asyncio.sleep(61)
-            if match_id in self._hydrated_match_ids or self.valo_rank.last_match_id != match_id:
-                return
-            await self.run_full_stat_hydration(match_id)
+            self._hydration_delay_ready_match_ids.add(match_id)
+            await self._maybe_run_delayed_hydration(match_id)
         except asyncio.CancelledError:
             return
+
+    async def _maybe_run_delayed_hydration(self, match_id):
+        if not should_run_delayed_hydration(
+            match_id=match_id,
+            hydration_match_id=self._hydration_match_id,
+            last_match_id=self.valo_rank.last_match_id,
+            hydrated_match_ids=self._hydrated_match_ids,
+            delay_ready_match_ids=self._hydration_delay_ready_match_ids,
+            coregame_ready_match_ids=self._hydration_coregame_ready_match_ids,
+            running_match_ids=self._hydration_running_match_ids,
+        ):
+            return
+
+        self._hydration_running_match_ids.add(match_id)
+        try:
+            await self.run_full_stat_hydration(match_id)
+        finally:
+            self._hydration_running_match_ids.discard(match_id)
 
     async def run_full_stat_hydration(self, match_id):
         if match_id in self._hydrated_match_ids or self.valo_rank.last_match_id != match_id:
@@ -6797,6 +6973,8 @@ class ValorantStatsWindow(QMainWindow):
             hydrated = await self.valo_rank.hydrate_match_stats()
             if hydrated:
                 self._hydrated_match_ids.add(match_id)
+                self._hydration_delay_ready_match_ids.discard(match_id)
+                self._hydration_coregame_ready_match_ids.discard(match_id)
                 self.safe_load_players(self.valo_rank.frontend_data)
                 self.update_metadata()
                 self._hydration_match_id = None
@@ -6835,25 +7013,32 @@ class ValorantStatsWindow(QMainWindow):
             await self.valo_rank.core_game_basics(match_id=match_id)
             self.safe_load_players(self.valo_rank.frontend_data)
             self.update_metadata()
+            coregame_match_id = match_id or self.valo_rank.last_match_id
+            self._hydration_coregame_ready_match_ids.add(coregame_match_id)
+            await self._maybe_run_delayed_hydration(coregame_match_id)
         except Exception as exc:
             print(f"Core-game basics refresh failed: {exc}")
 
     def run_load_more_matches_button(self):
         if not getattr(self.valo_rank, "full_stats_hydrated", False):
             self.load_more_matches_button.setEnabled(False)
+            self.notify_top_bar_bindings()
             return
         if self.load_more_matches_button.isEnabled():
             self.load_more_matches_button.setEnabled(False)
+            self.notify_top_bar_bindings()
             asyncio.create_task(self.run_load_more_matches())
 
     async def run_load_more_matches(self):
         self.refresh_button.setEnabled(False)
+        self.notify_top_bar_bindings()
         try:
             await self.valo_rank.load_more_matches()
             self.safe_load_players(self.valo_rank.frontend_data)
         finally:
             self.refresh_button.setEnabled(True)
             self.load_more_matches_button.setEnabled(getattr(self.valo_rank, "full_stats_hydrated", False))
+            self.notify_top_bar_bindings()
 
     async def refresh_data(self, prematch_id=None, match_id=None, party_id=None, map_instalock=None):
         if not self.refresh_button.isEnabled():
@@ -6864,6 +7049,7 @@ class ValorantStatsWindow(QMainWindow):
             return
 
         self.refresh_button.setEnabled(False)
+        self.notify_top_bar_bindings()
         try:
             print("Fetching latest Valorant stats...")
             handler = LockfileHandler()
@@ -6887,6 +7073,7 @@ class ValorantStatsWindow(QMainWindow):
             self.safe_load_players(self.valo_rank.frontend_data)
             self.update_metadata()
             self.load_more_matches_button.setEnabled(getattr(self.valo_rank, "full_stats_hydrated", False))
+            self.notify_top_bar_bindings()
         except Exception as exc:
             print(f"Refresh failed: {exc}")
             QMessageBox.warning(
@@ -6896,6 +7083,7 @@ class ValorantStatsWindow(QMainWindow):
             )
         finally:
             self.refresh_button.setEnabled(True)
+            self.notify_top_bar_bindings()
 
     def update_co_play_history_after_live_match(self):
         handler = getattr(self.valo_rank, "handler", None)
@@ -6942,6 +7130,7 @@ class ValorantStatsWindow(QMainWindow):
             self.starting_side_label.setText(label_text)
         else:
             self.starting_side_label.clear()
+        self.notify_top_bar_bindings()
 
     def populate_team_layout(self, scroll_area, layout, players):
         self.clear_layout(layout)
@@ -6968,6 +7157,7 @@ class ValorantStatsWindow(QMainWindow):
 
         self.gamemode_value.setText(gamemode)
         self.server_value.setText(server)
+        self.notify_top_bar_bindings()
 
 
 class ReasonInputPopup(QDialog):

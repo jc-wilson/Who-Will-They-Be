@@ -7,6 +7,12 @@ Rectangle {
 
     property var card: ({})
     property var theme: ({})
+    readonly property int statBandWidth: 338
+    readonly property real statChipWidth: (statBandWidth - 4 * 5) / 5
+    readonly property int rightPanelVerticalInset: 0
+    readonly property int solidCircleVisualTopOffset: 6
+    readonly property int bottomVisualOffset: 4
+    readonly property int nameRowEdgePadding: 8
     signal openTracker(string trackerUrl)
     signal openVtl(string vtlUrl)
     signal copyName(string clipboardName)
@@ -15,7 +21,7 @@ Rectangle {
 
     implicitHeight: 156
     height: 156
-    radius: 16
+    radius: 6
     color: cardMouse.containsMouse
         ? (card.isFlagged ? value("flaggedRowHover") : value("cardAlt"))
         : (card.isFlagged ? value("flaggedRow") : value("card"))
@@ -72,6 +78,10 @@ Rectangle {
         return value("text")
     }
 
+    function isAgentPlaceholder() {
+        return String(card.agentName || "").trim().toUpperCase() === "N/A"
+    }
+
     MouseArea {
         id: cardMouse
         anchors.fill: parent
@@ -82,29 +92,31 @@ Rectangle {
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: 12
-        anchors.rightMargin: 4
-        anchors.topMargin: 7
-        anchors.bottomMargin: 7
-        spacing: 18
+        anchors.rightMargin: 12
+        anchors.topMargin: 12
+        anchors.bottomMargin: 12
+        spacing: 12
 
         Item {
-            Layout.preferredWidth: 142
-            Layout.preferredHeight: 142
+            Layout.preferredWidth: 132
+            Layout.preferredHeight: 132
 
-            Rectangle {
+            Item {
                 anchors.fill: parent
-                radius: 12
-                color: root.alphaColor(root.value("window"), 0.5)
-                border.color: root.alphaColor(root.value("borderSoft"), 0.9)
                 clip: true
 
                 Image {
                     id: agentPortrait
                     anchors.fill: parent
-                    anchors.margins: 1
                     source: root.imageSource(card.agentIconPath)
                     fillMode: Image.PreserveAspectFit
                     visible: status === Image.Ready
+                }
+
+                BreathingDotsIndicator {
+                    anchors.centerIn: parent
+                    color: root.value("muted")
+                    visible: agentPortrait.status !== Image.Ready && root.isAgentPlaceholder()
                 }
 
                 Text {
@@ -116,17 +128,16 @@ Rectangle {
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.Wrap
-                    visible: agentPortrait.status !== Image.Ready
+                    visible: agentPortrait.status !== Image.Ready && !root.isAgentPlaceholder()
                 }
             }
 
             Rectangle {
                 anchors.left: parent.left
                 anchors.bottom: parent.bottom
-                anchors.margins: 2
                 width: Math.max(30, levelText.implicitWidth + 8)
                 height: 22
-                radius: 4
+                radius: 3
                 color: root.value("cyan")
 
                 Text {
@@ -140,149 +151,184 @@ Rectangle {
             }
         }
 
-        ColumnLayout {
+        SectionDivider {}
+
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumWidth: 260
-            spacing: 0
 
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 28
-                spacing: 8
+                ColumnLayout {
+                    width: root.statBandWidth
+                    height: 132
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 11
 
-                Text {
-                    id: nameText
-                    text: card.displayName || "Unknown"
-                    color: nameMouse.containsMouse ? root.value("cyan") : root.value("text")
-                    font.pixelSize: 20
-                    font.bold: true
-                    elide: Text.ElideRight
-                    Layout.maximumWidth: 260
-                    Layout.fillWidth: true
+                    RowLayout {
+                        Layout.preferredWidth: root.statBandWidth
+                        Layout.preferredHeight: 22
+                        spacing: 8
 
-                    MouseArea {
-                        id: nameMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.openTracker(card.trackerUrl || "")
-                    }
-                }
+                        Item {
+                            id: nameIdentityGroup
+                            readonly property int maxWidth: 252
+                            readonly property int iconSpacing: nameIdentityIcons.width > 0 ? 4 : 0
 
-                PlayerActionButton {
-                    iconPath: card.copyIconPath || ""
-                    fallbackText: "C"
-                    tooltipText: "Copy " + (card.clipboardName || "")
-                    theme: root.theme
-                    onClicked: root.copyName(card.clipboardName || "")
-                }
+                            Layout.alignment: Qt.AlignTop
+                            Layout.preferredWidth: Math.min(nameText.implicitWidth + nameIdentityIcons.width + iconSpacing, maxWidth)
+                            Layout.preferredHeight: 22
 
-                PlayerActionButton {
-                    iconPath: card.vtlIconPath || ""
-                    fallbackText: "V"
-                    tooltipText: "View on VTL.lol"
-                    theme: root.theme
-                    onClicked: root.openVtl(card.vtlUrl || "")
-                }
+                            Text {
+                                id: nameText
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Math.max(0, parent.width - nameIdentityIcons.width - nameIdentityGroup.iconSpacing)
+                                text: card.displayName || "Unknown"
+                                color: nameMouse.containsMouse ? root.value("cyan") : root.value("text")
+                                font.pixelSize: 20
+                                font.bold: true
+                                elide: Text.ElideRight
 
-                PlayerActionButton {
-                    iconPath: card.flagIconPath || ""
-                    fallbackText: "F"
-                    tooltipText: card.flagTooltip || "Toggle flagged player"
-                    theme: root.theme
-                    onClicked: root.toggleFlag(card.puuid || "")
-                }
-
-                Item { Layout.fillWidth: true }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 48
-                spacing: 12
-
-                Rectangle {
-                    id: weaponStrip
-                    Layout.preferredWidth: 160
-                    Layout.preferredHeight: 44
-                    radius: 10
-                    color: weaponMouse.containsMouse ? root.alphaColor(root.value("accentHover"), 0.16) : root.alphaColor(root.value("panel"), 0.72)
-                    border.color: weaponMouse.containsMouse ? root.value("accentHover") : root.alphaColor(root.value("borderSoft"), 0.82)
-
-                    Row {
-                        anchors.centerIn: parent
-                        spacing: 10
-
-                        Repeater {
-                            model: card.weaponIcons || []
-
-                            Rectangle {
-                                width: 65
-                                height: 36
-                                radius: 7
-                                color: root.alphaColor(root.value("window"), 0.42)
-                                border.color: root.alphaColor(root.value("borderSoft"), 0.75)
-
-                                Image {
+                                MouseArea {
+                                    id: nameMouse
                                     anchors.fill: parent
-                                    anchors.margins: 3
-                                    source: root.imageSource(modelData.iconPath)
-                                    fillMode: Image.PreserveAspectFit
-                                    visible: status === Image.Ready
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.openTracker(card.trackerUrl || "")
+                                }
+                            }
+
+                            RowLayout {
+                                id: nameIdentityIcons
+                                anchors.left: nameText.right
+                                anchors.leftMargin: nameIdentityGroup.iconSpacing
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
+
+                                NameRowIcon {
+                                    iconPath: card.hasBuddyEquipped ? (card.buddyIconPath || "") : ""
+                                    tooltipText: "Riot gun buddy"
+                                    theme: root.theme
+                                    Layout.alignment: Qt.AlignTop
                                 }
 
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "-"
-                                    color: root.value("muted")
-                                    font.pixelSize: 14
-                                    visible: !modelData.iconPath
+                                NameRowIcon {
+                                    iconPath: card.playerIconPath || ""
+                                    tooltipText: card.playerIconTooltip || "Player icon"
+                                    theme: root.theme
+                                    Layout.alignment: Qt.AlignTop
                                 }
                             }
                         }
+
+                        Item { Layout.fillWidth: true }
+
+                        PlayerActionButton {
+                            iconPath: card.copyIconPath || ""
+                            fallbackText: "C"
+                            tooltipText: "Copy " + (card.clipboardName || "")
+                            theme: root.theme
+                            Layout.alignment: Qt.AlignTop
+                            onClicked: root.copyName(card.clipboardName || "")
+                        }
+
+                        PlayerActionButton {
+                            iconPath: card.vtlIconPath || ""
+                            fallbackText: "V"
+                            tooltipText: "View on VTL.lol"
+                            theme: root.theme
+                            Layout.alignment: Qt.AlignTop
+                            onClicked: root.openVtl(card.vtlUrl || "")
+                        }
+
+                        PlayerActionButton {
+                            iconPath: card.flagIconPath || ""
+                            fallbackText: "F"
+                            tooltipText: card.flagTooltip || "Toggle flagged player"
+                            theme: root.theme
+                            Layout.alignment: Qt.AlignTop
+                            Layout.rightMargin: root.nameRowEdgePadding
+                            onClicked: root.toggleFlag(card.puuid || "")
+                        }
                     }
 
-                    MouseArea {
-                        id: weaponMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.openLoadout(card.playerKey || card.clipboardName || "")
+                RowLayout {
+                    Layout.preferredWidth: root.statBandWidth
+                    Layout.preferredHeight: 48
+                    spacing: 12
+
+                    Rectangle {
+                        id: weaponStrip
+                        Layout.preferredWidth: root.statBandWidth
+                        Layout.preferredHeight: 44
+                        radius: 5
+                        color: weaponMouse.containsMouse ? root.alphaColor(root.value("accentHover"), 0.16) : root.alphaColor(root.value("panel"), 0.72)
+                        border.color: weaponMouse.containsMouse ? root.value("accentHover") : root.alphaColor(root.value("borderSoft"), 0.82)
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: 7
+                            spacing: 8
+
+                            Repeater {
+                                model: card.weaponIcons || []
+
+                                Item {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+
+                                    Image {
+                                        anchors.fill: parent
+                                        anchors.margins: 2
+                                        source: root.imageSource(modelData.iconPath)
+                                        fillMode: Image.PreserveAspectFit
+                                        visible: status === Image.Ready
+                                    }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "-"
+                                        color: root.value("muted")
+                                        font.pixelSize: 14
+                                        visible: !modelData.iconPath
+                                    }
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            id: weaponMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.openLoadout(card.playerKey || card.clipboardName || "")
+                        }
+                    }
+
+                    Text {
+                        text: card.partyGroupId ? "Party " + card.partyGroupId : ""
+                        color: root.value("accentHover")
+                        font.pixelSize: 11
+                        font.bold: true
+                        visible: card.partyGroupId
                     }
                 }
 
-                Text {
-                    text: card.hasBuddyEquipped ? "Buddy" : ""
-                    color: root.value("gold")
-                    font.pixelSize: 11
-                    font.bold: true
-                    visible: card.hasBuddyEquipped
+                RowLayout {
+                    Layout.preferredWidth: root.statBandWidth
+                    spacing: 5
+
+                    StatChip { label: "GAMES"; textValue: card.gamesText || "0"; tone: "neutral"; theme: root.theme }
+                    StatChip { label: "W/L"; textValue: card.winRateText || "N/A"; tone: card.winRateTone || "neutral"; theme: root.theme }
+                    StatChip { label: "ACS"; textValue: card.acsText || "N/A"; tone: card.acsTone || "neutral"; theme: root.theme }
+                    StatChip { label: "KD"; textValue: card.kdText || "N/A"; tone: card.kdTone || "neutral"; theme: root.theme }
+                    StatChip { label: "HS"; textValue: card.hsText || "N/A"; tone: card.hsTone || "neutral"; theme: root.theme }
                 }
-
-                Text {
-                    text: card.partyGroupId ? "Party " + card.partyGroupId : ""
-                    color: root.value("accentHover")
-                    font.pixelSize: 11
-                    font.bold: true
-                    visible: card.partyGroupId
-                }
-
-                Item { Layout.fillWidth: true }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 5
-
-                StatChip { label: "GAMES"; textValue: card.gamesText || "0"; tone: "neutral"; theme: root.theme }
-                StatChip { label: "W/L"; textValue: card.winRateText || "N/A"; tone: card.winRateTone || "neutral"; theme: root.theme }
-                StatChip { label: "ACS"; textValue: card.acsText || "N/A"; tone: card.acsTone || "neutral"; theme: root.theme }
-                StatChip { label: "KD"; textValue: card.kdText || "N/A"; tone: card.kdTone || "neutral"; theme: root.theme }
-                StatChip { label: "HS"; textValue: card.hsText || "N/A"; tone: card.hsTone || "neutral"; theme: root.theme }
-                Item { Layout.fillWidth: true }
             }
         }
+
+        SectionDivider {}
 
         Item {
             Layout.preferredWidth: 300
@@ -290,8 +336,10 @@ Rectangle {
 
             Row {
                 id: recentRow
-                anchors.left: parent.left
+                anchors.right: currentRankColumn.left
+                anchors.rightMargin: 28
                 anchors.top: parent.top
+                anchors.topMargin: root.rightPanelVerticalInset + root.solidCircleVisualTopOffset
                 spacing: 4
 
                 Repeater {
@@ -327,14 +375,49 @@ Rectangle {
                 }
             }
 
-            Row {
-                anchors.left: parent.left
+            Item {
+                width: recentRow.width
+                height: 40
+                anchors.right: currentRankColumn.left
+                anchors.rightMargin: 28
                 anchors.bottom: parent.bottom
-                spacing: 8
+                anchors.bottomMargin: root.rightPanelVerticalInset + root.bottomVisualOffset
+
+                Item {
+                    id: peakRankSlot
+                    width: 42
+                    height: 40
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Image {
+                        width: 40
+                        height: 40
+                        anchors.centerIn: parent
+                        source: root.imageSource(card.peakRankIconPath)
+                        fillMode: Image.PreserveAspectFit
+                        visible: source != ""
+                    }
+
+                    Text {
+                        anchors.fill: parent
+                        text: card.peakRankText || "N/A"
+                        color: root.value("muted")
+                        font.pixelSize: 11
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        wrapMode: Text.Wrap
+                        visible: !card.peakRankIconPath
+                    }
+                }
 
                 Text {
-                    width: Math.max(50, implicitWidth + 12)
-                    height: 48
+                    anchors.left: peakRankSlot.right
+                    anchors.leftMargin: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(44, implicitWidth + 10)
+                    height: 40
                     text: card.peakActText || "N/A"
                     color: root.value("muted")
                     font.pixelSize: 24
@@ -343,37 +426,21 @@ Rectangle {
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
                 }
-
-                Image {
-                    width: 48
-                    height: 48
-                    source: root.imageSource(card.peakRankIconPath)
-                    fillMode: Image.PreserveAspectFit
-                    visible: source != ""
-                }
-
-                Text {
-                    width: 58
-                    height: 48
-                    text: card.peakRankText || "N/A"
-                    color: root.value("muted")
-                    font.pixelSize: 12
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    wrapMode: Text.Wrap
-                    visible: !card.peakRankIconPath
-                }
             }
 
-            Column {
+            Item {
+                id: currentRankColumn
+                width: 108
                 anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 8
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
 
                 Item {
-                    width: 124
-                    height: 124
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: parent.top
+                    anchors.topMargin: root.solidCircleVisualTopOffset
+                    width: 114
+                    height: 114
 
                     Image {
                         id: currentRankImage
@@ -397,10 +464,13 @@ Rectangle {
                 }
 
                 Rectangle {
+                    id: currentRrBar
                     width: 108
                     height: 7
                     radius: 3
                     anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: root.solidCircleVisualTopOffset
                     color: root.alphaColor(root.value("cardAlt"), 0.88)
                     clip: true
 
@@ -421,7 +491,115 @@ Rectangle {
                         id: rrMouse
                         anchors.fill: parent
                         hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
                         acceptedButtons: Qt.NoButton
+                    }
+                }
+            }
+        }
+    }
+
+    component NameRowIcon: Rectangle {
+        id: iconRoot
+        property string iconPath: ""
+        property string tooltipText: ""
+        property var theme: ({})
+
+        visible: iconPath.length > 0
+        Layout.preferredWidth: visible ? 20 : 0
+        Layout.preferredHeight: 20
+        radius: 3
+        color: "transparent"
+        border.color: "transparent"
+
+        function value(key) {
+            return theme && theme[key] ? theme[key] : "transparent"
+        }
+
+        function imageSource(path) {
+            if (!path) {
+                return ""
+            }
+            var normalized = String(path).replace(/\\/g, "/")
+            if (normalized.indexOf("file:/") === 0 || normalized.indexOf("qrc:/") === 0) {
+                return normalized
+            }
+            return "file:///" + normalized
+        }
+
+        Image {
+            id: nameIcon
+            anchors.fill: parent
+            source: iconRoot.imageSource(iconPath)
+            fillMode: Image.PreserveAspectFit
+            visible: status === Image.Ready
+        }
+
+        MouseArea {
+            id: nameIconMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.NoButton
+        }
+
+        ToolTip.visible: nameIconMouse.containsMouse && tooltipText.length > 0
+        ToolTip.text: tooltipText
+        ToolTip.delay: 450
+    }
+
+    component SectionDivider: Rectangle {
+        Layout.preferredWidth: 1
+        Layout.fillHeight: true
+        Layout.topMargin: 8
+        Layout.bottomMargin: 8
+        color: root.alphaColor(root.value("borderSoft"), 0.45)
+    }
+
+    component BreathingDotsIndicator: Item {
+        id: dotsRoot
+        property color color: root.value("muted")
+
+        width: 44
+        height: 18
+
+        Row {
+            anchors.centerIn: parent
+            spacing: 6
+
+            Repeater {
+                model: 3
+
+                Rectangle {
+                    id: dot
+                    property int dotIndex: index
+
+                    width: 8
+                    height: 8
+                    radius: 4
+                    color: dotsRoot.color
+                    opacity: 0.42
+
+                    transform: Scale {
+                        id: dotScale
+                        origin.x: dot.width / 2
+                        origin.y: dot.height / 2
+                        xScale: 0.72
+                        yScale: 0.72
+                    }
+
+                    SequentialAnimation {
+                        running: dotsRoot.visible
+                        loops: Animation.Infinite
+                        PauseAnimation { duration: dot.dotIndex * 170 }
+                        ParallelAnimation {
+                            NumberAnimation { target: dotScale; properties: "xScale,yScale"; to: 1.18; duration: 520; easing.type: Easing.InOutSine }
+                            NumberAnimation { target: dot; property: "opacity"; to: 1.0; duration: 520; easing.type: Easing.InOutSine }
+                        }
+                        ParallelAnimation {
+                            NumberAnimation { target: dotScale; properties: "xScale,yScale"; to: 0.72; duration: 520; easing.type: Easing.InOutSine }
+                            NumberAnimation { target: dot; property: "opacity"; to: 0.42; duration: 520; easing.type: Easing.InOutSine }
+                        }
+                        PauseAnimation { duration: (2 - dot.dotIndex) * 170 }
                     }
                 }
             }
@@ -435,11 +613,12 @@ Rectangle {
         property string tone: "neutral"
         property var theme: ({})
 
-        Layout.preferredWidth: 58
+        Layout.preferredWidth: root.statChipWidth
         Layout.preferredHeight: 40
-        radius: 10
-        color: alphaColor(value("panel"), 0.72)
-        border.color: alphaColor(value("borderSoft"), 0.88)
+        radius: 5
+        color: "transparent"
+        border.color: "transparent"
+        border.width: 0
 
         function value(key) {
             return theme && theme[key] ? theme[key] : "transparent"
@@ -455,7 +634,7 @@ Rectangle {
             spacing: 1
 
             Text {
-                width: 48
+                width: statRoot.width
                 text: label
                 color: statRoot.value("muted")
                 font.pixelSize: 10
@@ -464,7 +643,7 @@ Rectangle {
             }
 
             Text {
-                width: 48
+                width: statRoot.width
                 text: textValue
                 color: root.statColor(tone, textValue)
                 font.pixelSize: 13
@@ -483,9 +662,9 @@ Rectangle {
         property var theme: ({})
         signal clicked()
 
-        Layout.preferredWidth: 18
-        Layout.preferredHeight: 18
-        radius: 4
+        Layout.preferredWidth: 20
+        Layout.preferredHeight: 20
+        radius: 3
         color: buttonMouse.containsMouse ? alphaColor(value("accentHover"), 0.22) : "transparent"
         border.color: buttonMouse.containsMouse ? value("accentHover") : "transparent"
 
@@ -512,7 +691,6 @@ Rectangle {
         Image {
             id: actionIcon
             anchors.fill: parent
-            anchors.margins: 1
             source: buttonRoot.imageSource(iconPath)
             fillMode: Image.PreserveAspectFit
             opacity: buttonMouse.containsMouse ? 1.0 : 0.86
@@ -523,7 +701,7 @@ Rectangle {
             anchors.centerIn: parent
             text: fallbackText
             color: buttonMouse.containsMouse ? buttonRoot.value("accentHover") : buttonRoot.value("text")
-            font.pixelSize: 11
+            font.pixelSize: 13
             font.bold: true
             visible: actionIcon.status !== Image.Ready
         }

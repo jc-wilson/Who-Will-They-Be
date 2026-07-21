@@ -41,6 +41,13 @@ def _skin_asset_path(asset_id, resource_path_resolver):
     return _existing_asset_path(os.path.join("assets", "skins", f"{normalized_id}.png"), resource_path_resolver)
 
 
+def _buddy_icon_path(buddy_uuid, resource_path_resolver):
+    normalized_id = _normalize_asset_id(buddy_uuid)
+    if not normalized_id:
+        return ""
+    return _existing_asset_path(os.path.join("assets", "buddies", f"{normalized_id}.png"), resource_path_resolver)
+
+
 def _skin_id_from_skin_data(skin_data):
     if isinstance(skin_data, list):
         return skin_data[0] if skin_data else None
@@ -136,6 +143,7 @@ def build_player_card_display(
     formatter=None,
     flagged_players=None,
     resource_path_resolver=None,
+    player_icon_resolver=None,
     buddy_uuid=SPECIAL_BUDDY_UUID,
 ):
     player = player if isinstance(player, dict) else {}
@@ -166,6 +174,10 @@ def build_player_card_display(
     rating_change = formatter.rating_change_display(_first_rating_change(player))
     rating_changes = _rating_change_displays(player, formatter)
     rr_text, rr_progress = _rr_text_and_progress(player)
+    player_icon = player_icon_resolver(player) if player_icon_resolver is not None else {}
+    if not isinstance(player_icon, dict):
+        player_icon = {}
+    has_buddy_equipped = formatter.player_has_buddy_equipped(player, buddy_uuid)
 
     return {
         "displayName": display_name,
@@ -178,6 +190,8 @@ def build_player_card_display(
         "copyIconPath": _existing_asset_path(os.path.join("assets", "copy-regular.png"), resource_path_resolver),
         "vtlIconPath": _existing_asset_path(os.path.join("assets", "vtl.png"), resource_path_resolver),
         "flagIconPath": _existing_asset_path(os.path.join("assets", "flag-solid.png"), resource_path_resolver),
+        "playerIconPath": str(player_icon.get("iconPath", "") or ""),
+        "playerIconTooltip": str(player_icon.get("tooltip", "") or ""),
         "levelText": str(player.get("level", "N/A") if player.get("level", "N/A") not in (None, "") else "N/A"),
         "agentName": agent_name,
         "agentIconPath": _agent_icon_path(agent_name, resource_path_resolver),
@@ -203,7 +217,8 @@ def build_player_card_display(
         "ratingChanges": rating_changes,
         "isFlagged": formatter.player_is_flagged(player),
         "flagTooltip": formatter.get_flag_tooltip_for_player(player),
-        "hasBuddyEquipped": formatter.player_has_buddy_equipped(player, buddy_uuid),
+        "hasBuddyEquipped": has_buddy_equipped,
+        "buddyIconPath": _buddy_icon_path(buddy_uuid, resource_path_resolver) if has_buddy_equipped else "",
         "partyGroupId": _party_group_id(player),
     }
 
@@ -214,6 +229,7 @@ def build_player_card_displays(
     formatter=None,
     flagged_players=None,
     resource_path_resolver=None,
+    player_icon_resolver=None,
     buddy_uuid=SPECIAL_BUDDY_UUID,
 ):
     formatter = formatter or PlayerDisplayFormatter(flagged_players)
@@ -224,6 +240,7 @@ def build_player_card_displays(
             player,
             formatter=formatter,
             resource_path_resolver=resource_path_resolver,
+            player_icon_resolver=player_icon_resolver,
             buddy_uuid=buddy_uuid,
         )
         for player in (players or [])

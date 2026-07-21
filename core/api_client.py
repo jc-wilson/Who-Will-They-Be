@@ -266,16 +266,27 @@ class ValoRank:
             "xmpp_name_resolved": False,
         }
 
+    @staticmethod
+    def _has_preserved_name_fields(player):
+        if not isinstance(player, dict):
+            return False
+        if player.get("xmpp_name_resolved") or player.get("name_source") == "name_service":
+            return True
+        return bool(str(player.get("tag", "") or "").strip())
+
+    def _existing_name_fields(self, existing, agent_name):
+        return {
+            "name": existing.get("name") or existing.get("display_name") or str(agent_name or "N/A"),
+            "game_name": existing.get("game_name") or existing.get("name") or str(agent_name or "N/A"),
+            "tag": existing.get("tag", ""),
+            "name_source": existing.get("name_source") or "xmpp",
+            "xmpp_name_resolved": bool(existing.get("xmpp_name_resolved")),
+        }
+
     def _name_fields_for_puuid(self, puuid, agent_name):
         existing = self.frontend_data.get(puuid) if isinstance(self.frontend_data, dict) else None
-        if isinstance(existing, dict) and existing.get("xmpp_name_resolved"):
-            return {
-                "name": existing.get("name") or existing.get("display_name") or str(agent_name or "N/A"),
-                "game_name": existing.get("game_name") or existing.get("name") or str(agent_name or "N/A"),
-                "tag": existing.get("tag", ""),
-                "name_source": existing.get("name_source") or "xmpp",
-                "xmpp_name_resolved": True,
-            }
+        if self._has_preserved_name_fields(existing):
+            return self._existing_name_fields(existing, agent_name)
         return self._placeholder_name_fields(agent_name)
 
     def _reset_match_state(self, current_match_id):
@@ -966,7 +977,7 @@ class ValoRank:
             if puuid in self.frontend_data:
                 agent_name = self._agent_name_for_puuid(puuid)
                 self.frontend_data[puuid]["agent"] = agent_name
-                if not self.frontend_data[puuid].get("xmpp_name_resolved"):
+                if not self._has_preserved_name_fields(self.frontend_data[puuid]):
                     self.frontend_data[puuid].update(self._placeholder_name_fields(agent_name))
 
         await self.assign_skins()

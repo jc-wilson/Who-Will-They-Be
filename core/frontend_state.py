@@ -89,8 +89,8 @@ class FrontendWindowState:
     @staticmethod
     def starting_side_label_text(players, local_puuid):
         side_by_team = {
-            "Red": "DEFENSE",
-            "Blue": "ATTACK",
+            "Red": "ATTACK",
+            "Blue": "DEFENSE",
         }
         local_puuid = str(local_puuid or "").strip()
         side = None
